@@ -467,7 +467,7 @@ browser_wait 3秒
 | results | 完整结果数组，每条含 date/type/channel/from/to/subject/body |
 
 **若 fetchedTotal < filteredTotal**：部分抓取失败，已抓到的保存，失败的标注原因。
-**若 filteredTotal = 0**：该客户无实质沟通记录，如实告知。
+**若 filteredTotal = 0**：该客户无实质沟通记录，将 `status` 标记为 `skipped`，`skipReason` 记录"沟通记录=0"，直接跳到下一个客户，不进入后续阶段。
 **若 filteredTotal < 30**：有几条抓几条，不补造。
 
 ### 1.4 保存结果
