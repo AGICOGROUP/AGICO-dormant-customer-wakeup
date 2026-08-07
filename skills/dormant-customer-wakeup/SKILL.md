@@ -124,73 +124,165 @@ LTV 数据来源：CRM 客户详情页的「历史订单金额」字段，或 AI
 
 ### 0.1 导航到全部客户列表
 
+**⚠️ pageSize 限制：OKKI CRM 的 pageSize 最大为100，传500会弹出"pageSize 不能大于100"提示。必须用 pageSize=100 分页抓取。**
+
+**策略：先通过侧边栏客群筛选缩小范围，再分页抓取。**
+
+#### 步骤A：导航到客户列表
+
 ```
-browser_navigate → https://crm.xiaoman.cn/crm/customer/list?query={"curPage":1,"pageSize":500}
+browser_navigate → https://crm.xiaoman.cn/crm/customer/list
 ```
 
 - 用 `browser_info` 查看已有标签，优先复用 CRM 标签页
 - 若无可复用标签或权限被拒，`browser_open` 新标签
 - 确认页面加载完成（客户列表可见）
 
-> 说明：URL 中直接传 pageSize=500 参数，让 CRM 一次加载全部客户。这不是 API 调用，只是页面加载，不会触发反自动化检测。如果 pageSize=500 不生效（页面只显示前20条），改用 pageSize=100 分5页导航抓取。
+#### 步骤B：通过侧边栏客群筛选
+
+页面加载后，在左侧边栏找到客群分类，点击**「超过90天未联系」**客群。这个客群已经预筛选了最近联系时间>90天的客户，大幅缩小范围（约400-500个），其中>180天的就是我们的目标。
+
+- `browser_snapshot` 查看侧边栏结构
+- 点击「超过90天未联系」客群
+- `browser_wait 3秒` 等待列表加载
+
+> 说明：如果不使用客群筛选，直接在全部客户中翻页查找>180天的沉睡客户效率极低（可能需要翻几十页）。客群筛选是最快的方式。
+
+#### 步骤C：逐页抓取（每页100条）
+
+从第1页开始，逐页导航并执行 DOM 提取脚本，直到抓完所有页面或已找到足够的沉睡客户。
+
+```
+browser_navigate → https://crm.xiaoman.cn/crm/customer/list?query={"curPage":1,"pageSize":100}
+browser_wait 2秒
+browser_console evaluate → (执行0.2脚本)
+→ 记录结果
+→ 如果有下一页，翻到下一页继续
+```
+
+翻页方式：点击列表底部的分页「下一页」按钮，或直接改 URL 中的 curPage 参数。
+
+> pageSize=100 已验证有效，不会触发任何提示。每页加载后等待2秒确保 DOM 渲染完成。
 
 ### 0.2 DOM 读取客户名称 + 最近联系时间
+
+**⚠️ 关键发现（2026-08-07 测试验证）：**
+1. **DOM 结构**：OKKI CRM 使用 `div` 虚拟列表，客户名称是 `a[href*="company_id"]` 链接，不是标准 table
+2. **日期格式不统一**：较新记录显示"X天前"，较旧记录显示绝对日期"YYYY-MM-DD"，脚本必须兼容两种格式
+3. **选择器优先级**：用 `a[href*="company_id"]` 定位客户名称 → 向上遍历到行容器 → 在同行找日期元素
 
 `browser_console evaluate` 运行：
 
 ```javascript
 (() => {
-  // 方案1：标准表格行
+  const TODAY = new Date();  // 计算用
+  // 将 YYYY-MM-DD 转换为距今天数
+  const dateToDays = (dateStr) => {
+    const m = dateStr.match(/(\d{4})-(\d{2})-(\d{2})/);
+    if (!m) return null;
+    const d = new Date(parseInt(m[1]), parseInt(m[2])-1, parseInt(m[3]));
+    return Math.floor((TODAY - d) / 86400000);
+  };
+
   let results = [];
-  const rows = document.querySelectorAll('table tbody tr, .el-table__body tr');
-  rows.forEach(row => {
-    const cells = row.querySelectorAll('td');
-    if (cells.length < 6) return;
-    const name = cells[1]?.textContent?.trim() || '';
-    const timeText = cells[5]?.textContent?.trim() || '';
-    const daysMatch = timeText.match(/(\d+)天前/);
-    if (name && daysMatch) {
-      results.push({ name, days: parseInt(daysMatch[1]) });
+
+  // 方案1（推荐）：通过 company_id 链接定位客户名 → 向上遍历找行容器 → 同行找日期
+  const nameLinks = document.querySelectorAll('a[href*="company_id"]');
+  nameLinks.forEach(link => {
+    const name = link.textContent.trim();
+    if (!name || name.length < 2) return;
+    // 向上遍历找到行容器
+    let row = link.closest('tr') || link.closest('[class*="row"]') || link.closest('[class*="item"]') || link.parentElement?.parentElement;
+    if (!row) return;
+    const rowText = row.innerText || row.textContent || '';
+    // 尝试匹配"X天前"格式
+    const daysMatch = rowText.match(/(\d+)天前/);
+    if (daysMatch) {
+      results.push({ name, days: parseInt(daysMatch[1]), date: '' });
+      return;
+    }
+    // 尝试匹配 YYYY-MM-DD 格式
+    const dateMatch = rowText.match(/(\d{4}-\d{2}-\d{2})/);
+    if (dateMatch) {
+      const days = dateToDays(dateMatch[1]);
+      if (days !== null) results.push({ name, days, date: dateMatch[1] });
+      return;
+    }
+    // 行内未找到日期，尝试在兄弟元素中查找
+    let sibling = row.nextElementSibling;
+    let attempts = 0;
+    while (sibling && attempts < 3) {
+      const sibText = sibling.innerText || sibling.textContent || '';
+      const dMatch = sibText.match(/(\d+)天前/);
+      if (dMatch) { results.push({ name, days: parseInt(dMatch[1]), date: '' }); return; }
+      const dateM = sibText.match(/(\d{4}-\d{2}-\d{2})/);
+      if (dateM) { const d = dateToDays(dateM[1]); if (d !== null) { results.push({ name, days: d, date: dateM[1] }); return; } }
+      sibling = sibling.nextElementSibling;
+      attempts++;
     }
   });
 
-  // 方案2：虚拟滚动列表（OKKI CRM 使用 div 虚拟列表，不是标准 table）
+  // 方案2：标准表格行（兼容旧版 DOM）
   if (results.length === 0) {
-    // 找所有包含"X天前"的元素
-    const timeEls = [];
-    document.querySelectorAll('*').forEach(el => {
-      if (el.children.length === 0 && el.textContent.match(/\d+天前/)) timeEls.push(el);
-    });
-    timeEls.forEach(tEl => {
-      // 向上找包含客户名称的行容器
-      let row = tEl.closest('tr') || tEl.closest('[class*="row-item"], [class*="virtual"]');
-      if (!row) return;
-      const name = row.querySelector('td:nth-child(2), [class*="title"]')?.textContent?.trim() || '';
-      const daysMatch = tEl.textContent.match(/(\d+)天前/);
-      if (name && daysMatch && name !== '公司名称') {
-        results.push({ name, days: parseInt(daysMatch[1]) });
+    const rows = document.querySelectorAll('table tbody tr, .el-table__body tr');
+    rows.forEach(row => {
+      const cells = row.querySelectorAll('td');
+      if (cells.length < 6) return;
+      const name = cells[1]?.textContent?.trim() || '';
+      const timeText = cells[5]?.textContent?.trim() || '';
+      const daysMatch = timeText.match(/(\d+)天前/);
+      if (name && daysMatch) {
+        results.push({ name, days: parseInt(daysMatch[1]), date: '' });
+        return;
+      }
+      const dateMatch = timeText.match(/(\d{4}-\d{2}-\d{2})/);
+      if (name && dateMatch) {
+        const days = dateToDays(dateMatch[1]);
+        if (days !== null) results.push({ name, days, date: dateMatch[1] });
       }
     });
   }
 
-  // 方案3：直接从所有文本中提取（兜底）
+  // 方案3：从所有文本行中提取（兜底）
   if (results.length === 0) {
-    // OKKI 虚拟列表中，每行文本格式为 "公司名称...其他信息...X天前...国家"
     const allText = document.body.innerText;
-    const lines = allText.split('\n').filter(l => l.includes('天前'));
+    const lines = allText.split('\n');
     lines.forEach(line => {
+      // 匹配"X天前"
       const daysMatch = line.match(/(\d+)天前/);
-      if (!daysMatch) return;
-      // 尝试提取公司名称（行首到第一个数字前）
-      const nameMatch = line.match(/^([^\d]+)/);
-      if (nameMatch) {
-        const name = nameMatch[1].trim();
-        if (name && name.length > 2 && name !== '公司名称') {
-          results.push({ name, days: parseInt(daysMatch[1]) });
+      if (daysMatch) {
+        const nameMatch = line.match(/^([^\d]+)/);
+        if (nameMatch) {
+          const name = nameMatch[1].trim();
+          if (name && name.length > 2 && name !== '公司名称') {
+            results.push({ name, days: parseInt(daysMatch[1]), date: '' });
+          }
+        }
+        return;
+      }
+      // 匹配 YYYY-MM-DD
+      const dateMatch = line.match(/(\d{4}-\d{2}-\d{2})/);
+      if (dateMatch) {
+        const nameMatch = line.match(/^([^\d]+)/);
+        if (nameMatch) {
+          const name = nameMatch[1].trim();
+          const days = dateToDays(dateMatch[1]);
+          if (name && name.length > 2 && days !== null && name !== '公司名称') {
+            results.push({ name, days, date: dateMatch[1] });
+          }
         }
       }
     });
   }
+
+  // 去重（同名称只保留沉睡天数最多的）
+  const seen = new Map();
+  results.forEach(r => {
+    if (!seen.has(r.name) || seen.get(r.name).days < r.days) {
+      seen.set(r.name, r);
+    }
+  });
+  results = Array.from(seen.values());
 
   // 过滤沉睡 >180天，按天数降序
   const dormant = results
@@ -201,12 +293,21 @@ browser_navigate → https://crm.xiaoman.cn/crm/customer/list?query={"curPage":1
     totalCustomers: results.length,
     dormantCount: dormant.length,
     top10: dormant.slice(0, 10),
-    top10Names: dormant.slice(0, 10).map(c => `${c.name} (${c.days}天)`)
+    top10Names: dormant.slice(0, 10).map(c => `${c.name} (${c.days}天${c.date ? ', ' + c.date : ''})`)
   });
 })()
 ```
 
-> 注意：OKKI CRM 的客户列表使用虚拟滚动（div 而非 table），DOM 结构可能变化。脚本包含3层兜底方案。如果都失败，用 `browser_snapshot` 查看实际结构后调整选择器。
+> **⚠️ 已验证的坑（2026-08-07 测试）：**
+> 
+> | 坑 | 错误做法 | 正确做法 |
+> |----|----------|----------|
+> | pageSize>100 | URL 传 pageSize=500 | **pageSize 最大100**，传500会弹出"pageSize 不能大于100"提示 |
+> | 日期格式 | 只匹配"X天前" | **末页旧记录显示 YYYY-MM-DD 绝对日期**，必须兼容两种格式 |
+> | DOM 结构 | 用 table tr 选择器 | **OKKI CRM 使用 div 虚拟列表**，客户名是 `a[href*="company_id"]` 链接 |
+> | 选择器优先级 | 先找行再找名 | **先通过 `a[href*="company_id"]` 定位名称**，再向上遍历找行容器和日期 |
+> 
+> 如果3层方案都返回0条，用 `browser_snapshot` 查看实际 DOM 结构后调整选择器。
 
 ### 0.3 保存列表（只取前10个）
 
