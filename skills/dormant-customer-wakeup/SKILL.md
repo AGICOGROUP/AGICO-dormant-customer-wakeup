@@ -314,10 +314,10 @@ browser_wait 3秒
 
 ```
 browser_navigate → https://crm.xiaoman.cn/crm/customer/personal?company_id={companyId}
-browser_wait 3秒
 ```
 
 > **⚠️ 详情页 URL 是 `/personal?company_id=`，不是 `/detail?company_id=`（后者会 404）。**
+> **⚠️ 不需要 browser_wait，导航完成后直接执行1.2脚本。browser_navigate 本身已等待页面加载完成。**
 
 ### 1.2 一键抓取脚本（trailList 元数据 + 过滤 + 分批详情正文）
 
@@ -327,7 +327,7 @@ browser_wait 3秒
 1. trailList 按半年时间窗口分段抓列表元数据（带随机延迟）
 2. 过滤非实质沟通（已读回执/撤回/自动回复/系统消息）
 3. 按每批10条分批调详情 API（邮件正文 + WhatsApp 消息）
-4. 批间停3-5秒，条间500-1500ms随机延迟
+4. **批间停9-13秒**，条间1-3秒随机延迟
 5. 有几条抓几条（不足10条不强制凑数）
 
 ```javascript
@@ -383,7 +383,12 @@ browser_wait 3秒
 
   const filtered = allItems.filter(isReal).slice(0, 30);
 
-  // === 第3步：分批抓详情正文（每批10条）===
+  // 如果没有实质沟通记录，直接返回（agent 标记 skipped 跳到下一个）
+  if (filtered.length === 0) {
+    return JSON.stringify({rawTotal: allItems.length, filteredTotal: 0, fetchedTotal: 0, emailCount: 0, whatsappCount: 0, failCount: 0, results: []});
+  }
+
+  // === 第3步：分批抓详情正文（每批10条，批间9-13秒）===
   const batchSize = 10;
   const allResults = [];
 
@@ -426,16 +431,16 @@ browser_wait 3秒
             contactId: contactId
           });
         }
-        await sleep(rand(500, 1500));  // 条间随机延迟
+        await sleep(rand(1000, 3000));  // 条间随机延迟1-3秒
       } catch(e) {
         allResults.push({date: item.gmtCreate, type: '抓取失败', error: e.message, subject: item.subject || ''});
-        await sleep(rand(800, 2000));  // 失败后多等
+        await sleep(rand(2000, 4000));  // 失败后多等
       }
     }
 
-    // 批间等待（不是最后一批才等）
+    // 批间等待9-13秒（不是最后一批才等）
     if (i + batchSize < filtered.length) {
-      await sleep(rand(3000, 5000));
+      await sleep(rand(9000, 13000));
     }
   }
 
