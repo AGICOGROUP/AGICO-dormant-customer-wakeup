@@ -111,72 +111,54 @@ LTV 数据来源：CRM 客户详情页的「历史订单金额」字段，或 AI
 
 ---
 
-## 阶段零：筛选沉睡客户
+## 阶段零：脚本化极速筛选沉睡客户
 
 仅在首次运行、列表不存在、全部已处理完成、或用户明确要求刷新时执行。
 
 ### 设计原则
 
-- 客户列表可能有很多页（几百条），但一次任务最多处理10个客户
-- 阶段零只抓客户名称+沉睡天数，不抓 companyId 等详细信息（到阶段一进入详情页时才获取）
-- 按沉睡天数降序排列，最久没联系的优先处理
-- 一次只取前10个沉睡客户存入列表，处理完一批再抓下一批
+- **脚本驱动，非 AI 分析**：全部筛选逻辑在 `browser_console` 脚本中完成，不逐行 AI 判断
+- **不翻页盲目抓取**：当前页有符合条件的客户就记录，无则点「下一页」继续
+- **两条硬筛选条件（不可更改）**：
+  1. 最近联系时间 > 180天
+  2. 客户标签不含「无需盘活」
+- **有几个符合条件的就提取几个**，不限制只取10个
+- companyId 留空，进入详情页时从 URL 获取
 
-### 0.1 导航到全部客户列表
+### 0.1 导航到客群列表
 
-**⚠️ pageSize 限制：OKKI CRM 的 pageSize 最大为100，传500会弹出"pageSize 不能大于100"提示。必须用 pageSize=100 分页抓取。**
-
-**策略：先通过侧边栏客群筛选缩小范围，再分页抓取。**
-
-#### 步骤A：导航到客户列表
+**⚠️ pageSize 限制：OKKI CRM 的 pageSize 最大为100，传500会弹出"pageSize 不能大于100"提示。**
 
 ```
-browser_navigate → https://crm.xiaoman.cn/crm/customer/list
+browser_navigate → https://crm.xiaoman.cn/crm/customer/list?query={"curPage":1,"pageSize":100}
+browser_wait 3秒
 ```
 
 - 用 `browser_info` 查看已有标签，优先复用 CRM 标签页
 - 若无可复用标签或权限被拒，`browser_open` 新标签
-- 确认页面加载完成（客户列表可见）
+- 导航后需确认已进入「超过90天未联系」客群（侧边栏 `p.truncate.title` 高亮）
 
-#### 步骤B：通过侧边栏客群筛选
+> 如果页面未自动进入客群，点击侧边栏 `p.truncate.title`（文本「超过90天未联系」），`browser_wait 3秒`
 
-页面加载后，在左侧边栏找到客群分类，点击**「超过90天未联系」**客群。这个客群已经预筛选了最近联系时间>90天的客户，大幅缩小范围（约400-500个），其中>180天的就是我们的目标。
+### 0.2 页面 DOM 结构参考
 
-- `browser_snapshot` 查看侧边栏结构
-- 点击「超过90天未联系」客群
-- `browser_wait 3秒` 等待列表加载
+> 完整结构参考：`${workspace_memory}/reference/okki-crm-dom-selectors.md`
 
-> 说明：如果不使用客群筛选，直接在全部客户中翻页查找>180天的沉睡客户效率极低（可能需要翻几十页）。客群筛选是最快的方式。
+| 元素 | 选择器 | 说明 |
+|------|--------|------|
+| 数据行 | `div.row-item.row-item-level-1` | 不含 `row-item__title` |
+| 客户名 | `a[href*="company_id"]` | 第3列 `data-cci="2"` |
+| 客户标签 | `.tag__overflow-item:not(.tag__overflow-item-rest) span` | 第4列 `data-cci="3"` |
+| 最近联系时间 | `div.cell[data-cci="6"] .cell-inner` | 文本含"X天前"或"YYYY-MM-DD" |
+| 下一页按钮 | `li.okki-pagination-next` | 到末页 class 含 `okki-pagination-disabled` |
 
-#### 步骤C：逐页抓取（每页100条）
+### 0.3 极速筛选脚本（核心）
 
-从第1页开始，逐页导航并执行 DOM 提取脚本，直到抓完所有页面或已找到足够的沉睡客户。
-
-```
-browser_navigate → https://crm.xiaoman.cn/crm/customer/list?query={"curPage":1,"pageSize":100}
-browser_wait 2秒
-browser_console evaluate → (执行0.2脚本)
-→ 记录结果
-→ 如果有下一页，翻到下一页继续
-```
-
-翻页方式：点击列表底部的分页「下一页」按钮，或直接改 URL 中的 curPage 参数。
-
-> pageSize=100 已验证有效，不会触发任何提示。每页加载后等待2秒确保 DOM 渲染完成。
-
-### 0.2 DOM 读取客户名称 + 最近联系时间
-
-**⚠️ 关键发现（2026-08-07 测试验证）：**
-1. **DOM 结构**：OKKI CRM 使用 `div` 虚拟列表，客户名称是 `a[href*="company_id"]` 链接，不是标准 table
-2. **日期格式不统一**：较新记录显示"X天前"，较旧记录显示绝对日期"YYYY-MM-DD"，脚本必须兼容两种格式
-3. **选择器优先级**：用 `a[href*="company_id"]` 定位客户名称 → 向上遍历到行容器 → 在同行找日期元素
-
-`browser_console evaluate` 运行：
+`browser_console evaluate` 运行以下脚本，**一次执行完成当前页的筛选**：
 
 ```javascript
 (() => {
-  const TODAY = new Date();  // 计算用
-  // 将 YYYY-MM-DD 转换为距今天数
+  const TODAY = new Date();
   const dateToDays = (dateStr) => {
     const m = dateStr.match(/(\d{4})-(\d{2})-(\d{2})/);
     if (!m) return null;
@@ -184,130 +166,143 @@ browser_console evaluate → (执行0.2脚本)
     return Math.floor((TODAY - d) / 86400000);
   };
 
-  let results = [];
+  const rows = document.querySelectorAll('div.row-item.row-item-level-1');
+  const qualified = [];
+  const skipped = { noName: 0, under180: 0, noRevive: 0 };
 
-  // 方案1（推荐）：通过 company_id 链接定位客户名 → 向上遍历找行容器 → 同行找日期
-  const nameLinks = document.querySelectorAll('a[href*="company_id"]');
-  nameLinks.forEach(link => {
+  rows.forEach(row => {
+    // 1. 提取客户名 + companyId
+    const link = row.querySelector('a[href*="company_id"]');
+    if (!link) { skipped.noName++; return; }
     const name = link.textContent.trim();
-    if (!name || name.length < 2) return;
-    // 向上遍历找到行容器
-    let row = link.closest('tr') || link.closest('[class*="row"]') || link.closest('[class*="item"]') || link.parentElement?.parentElement;
-    if (!row) return;
-    const rowText = row.innerText || row.textContent || '';
-    // 尝试匹配"X天前"格式
-    const daysMatch = rowText.match(/(\d+)天前/);
+    if (!name || name.length < 2) { skipped.noName++; return; }
+    const href = link.getAttribute('href') || '';
+    const cid = (href.match(/company_id=(\d+)/) || [])[1] || '';
+
+    // 2. 提取客户标签
+    const tagSpans = row.querySelectorAll('.tag__overflow-item:not(.tag__overflow-item-rest) span');
+    const tags = Array.from(tagSpans).map(s => s.textContent.trim());
+    const hasNoRevive = tags.some(t => t.includes('无需盘活'));
+
+    // 3. 提取最近联系时间
+    const timeCell = row.querySelector('div.cell[data-cci="6"] .cell-inner') || row.querySelector('div.cell[data-cci="6"]');
+    const timeText = timeCell ? timeCell.textContent.trim() : '';
+    let days = null;
+    const daysMatch = timeText.match(/(\d+)天前/);
     if (daysMatch) {
-      results.push({ name, days: parseInt(daysMatch[1]), date: '' });
-      return;
-    }
-    // 尝试匹配 YYYY-MM-DD 格式
-    const dateMatch = rowText.match(/(\d{4}-\d{2}-\d{2})/);
-    if (dateMatch) {
-      const days = dateToDays(dateMatch[1]);
-      if (days !== null) results.push({ name, days, date: dateMatch[1] });
-      return;
-    }
-    // 行内未找到日期，尝试在兄弟元素中查找
-    let sibling = row.nextElementSibling;
-    let attempts = 0;
-    while (sibling && attempts < 3) {
-      const sibText = sibling.innerText || sibling.textContent || '';
-      const dMatch = sibText.match(/(\d+)天前/);
-      if (dMatch) { results.push({ name, days: parseInt(dMatch[1]), date: '' }); return; }
-      const dateM = sibText.match(/(\d{4}-\d{2}-\d{2})/);
-      if (dateM) { const d = dateToDays(dateM[1]); if (d !== null) { results.push({ name, days: d, date: dateM[1] }); return; } }
-      sibling = sibling.nextElementSibling;
-      attempts++;
-    }
-  });
-
-  // 方案2：标准表格行（兼容旧版 DOM）
-  if (results.length === 0) {
-    const rows = document.querySelectorAll('table tbody tr, .el-table__body tr');
-    rows.forEach(row => {
-      const cells = row.querySelectorAll('td');
-      if (cells.length < 6) return;
-      const name = cells[1]?.textContent?.trim() || '';
-      const timeText = cells[5]?.textContent?.trim() || '';
-      const daysMatch = timeText.match(/(\d+)天前/);
-      if (name && daysMatch) {
-        results.push({ name, days: parseInt(daysMatch[1]), date: '' });
-        return;
-      }
+      days = parseInt(daysMatch[1]);
+    } else {
       const dateMatch = timeText.match(/(\d{4}-\d{2}-\d{2})/);
-      if (name && dateMatch) {
-        const days = dateToDays(dateMatch[1]);
-        if (days !== null) results.push({ name, days, date: dateMatch[1] });
-      }
-    });
-  }
-
-  // 方案3：从所有文本行中提取（兜底）
-  if (results.length === 0) {
-    const allText = document.body.innerText;
-    const lines = allText.split('\n');
-    lines.forEach(line => {
-      // 匹配"X天前"
-      const daysMatch = line.match(/(\d+)天前/);
-      if (daysMatch) {
-        const nameMatch = line.match(/^([^\d]+)/);
-        if (nameMatch) {
-          const name = nameMatch[1].trim();
-          if (name && name.length > 2 && name !== '公司名称') {
-            results.push({ name, days: parseInt(daysMatch[1]), date: '' });
-          }
-        }
-        return;
-      }
-      // 匹配 YYYY-MM-DD
-      const dateMatch = line.match(/(\d{4}-\d{2}-\d{2})/);
-      if (dateMatch) {
-        const nameMatch = line.match(/^([^\d]+)/);
-        if (nameMatch) {
-          const name = nameMatch[1].trim();
-          const days = dateToDays(dateMatch[1]);
-          if (name && name.length > 2 && days !== null && name !== '公司名称') {
-            results.push({ name, days, date: dateMatch[1] });
-          }
-        }
-      }
-    });
-  }
-
-  // 去重（同名称只保留沉睡天数最多的）
-  const seen = new Map();
-  results.forEach(r => {
-    if (!seen.has(r.name) || seen.get(r.name).days < r.days) {
-      seen.set(r.name, r);
+      if (dateMatch) days = dateToDays(dateMatch[1]);
     }
-  });
-  results = Array.from(seen.values());
 
-  // 过滤沉睡 >180天，按天数降序
-  const dormant = results
-    .filter(r => r.days > 180)
-    .sort((a, b) => b.days - a.days);
+    // 4. 硬筛选条件1：最近联系 > 180天
+    if (days === null || days <= 180) { skipped.under180++; return; }
+
+    // 5. 硬筛选条件2：标签不含「无需盘活」
+    if (hasNoRevive) { skipped.noRevive++; return; }
+
+    qualified.push({ name, companyId: cid, sleepDays: days, tags, lastContactText: timeText });
+  });
+
+  // 检查是否有下一页
+  const nextBtn = document.querySelector('li.okki-pagination-next');
+  const hasNext = nextBtn && !nextBtn.classList.contains('okki-pagination-disabled');
 
   return JSON.stringify({
-    totalCustomers: results.length,
-    dormantCount: dormant.length,
-    top10: dormant.slice(0, 10),
-    top10Names: dormant.slice(0, 10).map(c => `${c.name} (${c.days}天${c.date ? ', ' + c.date : ''})`)
+    pageRows: rows.length,
+    qualifiedCount: qualified.length,
+    qualified: qualified,
+    skipped: skipped,
+    hasNextPage: hasNext
   });
 })()
 ```
 
-> **⚠️ 已验证的坑（2026-08-07 测试）：**
-> 
-> | 坑 | 错误做法 | 正确做法 |
-> |----|----------|----------|
-> | pageSize>100 | URL 传 pageSize=500 | **pageSize 最大100**，传500会弹出"pageSize 不能大于100"提示 |
-> | 日期格式 | 只匹配"X天前" | **末页旧记录显示 YYYY-MM-DD 绝对日期**，必须兼容两种格式 |
-> | DOM 结构 | 用 table tr 选择器 | **OKKI CRM 使用 div 虚拟列表**，客户名是 `a[href*="company_id"]` 链接 |
-> | 选择器优先级 | 先找行再找名 | **先通过 `a[href*="company_id"]` 定位名称**，再向上遍历找行容器和日期 |
-> 
-> 如果3层方案都返回0条，用 `browser_snapshot` 查看实际 DOM 结构后调整选择器。
+### 0.4 翻页逻辑
+
+脚本返回后根据 `hasNextPage` 和 `qualifiedCount` 决定下一步：
+
+| 条件 | 动作 |
+|------|------|
+| `hasNextPage=true` 且 `qualifiedCount=0` | 点击 `li.okki-pagination-next` → `browser_wait 2秒` → 重新执行0.3脚本 |
+| `hasNextPage=true` 且 `qualifiedCount>0` | 记录当前页合格客户 → 继续翻页找更多（点击下一页 → 0.3脚本） |
+| `hasNextPage=true` 且当前页客户已全部记录 | 继续翻页找更多 |
+| `hasNextPage=false` | 到末页，合并所有页的合格客户，进入0.5保存 |
+
+> 翻页方式：`browser_click` 点击 `li.okki-pagination-next` → `browser_wait 2秒` → 重新执行0.3脚本
+
+### 0.5 保存列表
+
+将所有页的合格客户合并，写入 `${workspace_memory}/project/dormant-customers.json`：
+
+```json
+{
+  "generatedAt": "2026-08-07T18:00:00+08:00",
+  "filterDays": 180,
+  "excludeTags": ["无需盘活"],
+  "total": N,
+  "customers": [
+    {
+      "index": 1,
+      "companyId": "123456",
+      "name": "ABC Corp",
+      "sleepDays": 365,
+      "lastContactText": "365天前",
+      "tags": ["7天内新询盘"],
+      "status": "pending"
+    }
+  ]
+}
+```
+
+### 0.6 输出筛选结果 + 进入第一个客户
+
+```markdown
+## 沉睡客户筛选结果
+
+> 筛选条件：最近联系>180天 且 标签不含「无需盘活」| 共 {N} 个合格客户
+
+| 序号 | 客户名称 | 沉睡天数 | 标签 |
+|------|----------|----------|------|
+| 1 | XXX | 365天 | 标签1, 标签2 |
+| ... | ... | ... | ... |
+
+现在进入第 1 个客户详情页开始抓取沟通记录。
+```
+
+**取第一个 `status: "pending"` 的客户，点击客户名链接进入详情页。** 不等待确认，直接进入阶段一。
+
+### 0.7 批次管理
+
+- 每批所有合格客户处理完后 → 提示用户"本批已全部完成，是否抓取下一批？"
+- 用户确认 → 重新执行阶段零抓取下一批（跳过已处理的可通过名称去重）
+- 用户拒绝 → 保存当前进度，下次继续
+
+### 0.8 DOM 结构变更兜底
+
+如果0.3脚本返回 `pageRows=0`，说明 DOM 结构已变更。执行以下探测脚本：
+
+```javascript
+(() => {
+  const links = document.querySelectorAll('a[href*="company_id"]');
+  return JSON.stringify({
+    linkCount: links.length,
+    sample: links[0] ? {
+      text: links[0].textContent.trim(),
+      href: links[0].getAttribute('href'),
+      classes: links[0].className,
+      ancestorClasses: (() => {
+        let el = links[0], chain = [];
+        for (let i=0; i<5; i++) { el = el.parentElement; if(!el) break; chain.push({tag: el.tagName, classes: el.className}); }
+        return chain;
+      })()
+    } : null
+  });
+})()
+```
+
+根据探测结果调整选择器，重新执行0.3脚本。
 
 ### 0.3 保存列表（只取前10个）
 
