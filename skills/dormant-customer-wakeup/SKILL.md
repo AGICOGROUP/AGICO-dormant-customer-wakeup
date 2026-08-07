@@ -125,7 +125,7 @@ LTV 数据来源：CRM 客户详情页的「历史订单金额」字段，或 AI
 - **有几个符合条件的就提取几个**，不限制只取10个
 - companyId 留空，进入详情页时从 URL 获取
 
-### 0.1 导航到客群列表
+### 0.1 导航到全部客户列表
 
 **⚠️ pageSize 限制：OKKI CRM 的 pageSize 最大为100，传500会弹出"pageSize 不能大于100"提示。**
 
@@ -136,9 +136,9 @@ browser_wait 3秒
 
 - 用 `browser_info` 查看已有标签，优先复用 CRM 标签页
 - 若无可复用标签或权限被拒，`browser_open` 新标签
-- 导航后需确认已进入「超过90天未联系」客群（侧边栏 `p.truncate.title` 高亮）
+- 直接在全部客户列表上筛选，不进入「超过90天未联系」客群（省去侧边栏点击时间）
 
-> 如果页面未自动进入客群，点击侧边栏 `p.truncate.title`（文本「超过90天未联系」），`browser_wait 3秒`
+> ~~取消客群筛选步骤：通过侧边栏进入「超过90天未联系」客群需额外2分钟，不如直接在全部客户列表翻页筛选效率高。脚本的两条硬筛选条件（>180天 + 标签不含「无需盘活」）已能精准过滤。~~
 
 ### 0.2 页面 DOM 结构参考
 
@@ -304,102 +304,31 @@ browser_wait 3秒
 
 根据探测结果调整选择器，重新执行0.3脚本。
 
-### 0.3 保存列表（只取前10个）
-
-将筛选结果写入 `${workspace_memory}/project/dormant-customers.json`：
-
-```json
-{
-  "generatedAt": "2026-08-07T16:55:00+08:00",
-  "filterDays": 180,
-  "batchSize": 10,
-  "total": 10,
-  "customers": [
-    {
-      "index": 1,
-      "companyId": "",
-      "name": "最沉睡的客户名",
-      "sleepDays": 365,
-      "status": "pending"
-    }
-  ]
-}
-```
-
-> companyId 留空，进入详情页时从 URL 获取。
-
-### 0.4 输出筛选结果
-
-```markdown
-## 沉睡客户筛选结果
-
-> 筛选条件：最近联系时间 > 180天 | 共 {dormantCount} 个沉睡客户 | 本批取前10个
-
-| 序号 | 客户名称 | 沉睡天数 |
-|------|----------|----------|
-| 1 | XXX | 365天 |
-| 2 | YYY | 300天 |
-| ... | ... | ... |
-
-（还有 {dormantCount-10} 个沉睡客户待后续批次处理）
-
-现在开始分析第 1 个？
-```
-
-确认后进入阶段一。
-
-### 0.5 批次管理
-
-- 每批最多10个客户
-- 10个全部处理完后（status 均为 completed）→ 提示用户"本批10个已全部完成，是否抓取下一批？"
-- 用户确认 → 重新执行阶段零抓取下一批10个（跳过已处理的可通过名称去重）
-- 用户拒绝 → 保存当前进度，下次继续
-
 ---
 
-## 阶段一：进入当前客户 + 批量抓取沟通记录（邮件+WhatsApp）
+## 阶段一：进入客户详情 + 抓取沟通记录正文（一个脚本完成）
 
 ### 1.1 进入客户详情
 
 从 `dormant-customers.json` 取第一个 `status: "pending"` 的客户。
 
-**方式A — 在筛选结果列表中直接点击客户名（推荐）：**
-- 如果筛选结果列表仍在页面上，直接点击该客户名称链接
-- `browser_wait 2秒` → 进入详情页
-- URL 含 `company_id` 即成功
-
-**方式B — 通过URL直接跳转：**
 ```
-browser_navigate → https://crm.xiaoman.cn/crm/customer/detail?company_id={companyId}
+browser_navigate → https://crm.xiaoman.cn/crm/customer/personal?company_id={companyId}
+browser_wait 3秒
 ```
 
-### 1.2 统一API批量抓取（邮件+WhatsApp，最近30条，分批+延迟）
+> **⚠️ 详情页 URL 是 `/personal?company_id=`，不是 `/detail?company_id=`（后者会 404）。**
 
-**关键认知：OKKI CRM 按年份折叠历史动态。trailList API 必须带时间参数才能跨年查询。**
+### 1.2 一键抓取脚本（trailList 元数据 + 过滤 + 分批详情正文）
 
-策略：从当前年份开始 → 不够30条 → 展开上一年 → 继续抓 → 直到凑满30条或没有更多。
+**进入详情页后，执行一次 `browser_console evaluate` 即可完成全部抓取。**
 
-**⚠️ 反自动化对抗策略（必读）：**
-
-OKKI CRM 有反自动化检测，短时间内大量 API 调用会触发拦截（404/封禁）。必须采用以下措施：
-
-| 措施 | 做法 | 原理 |
-|------|------|------|
-| **随机延迟** | 每次 fetch 之间加 500-1500ms 随机延迟 | 模拟人类操作节奏 |
-| **分批抓取** | 30 条拆成 3 批（每批 10 条），批间停 3-5 秒 | 降低瞬时并发 |
-| **减少详情调用** | 列表全部抓取，但详情（正文）只抓前 15 条 | 够分析用，降低 API 总量 |
-| **单次脚本超时** | 单次 browser_console 脚本运行不超过 60 秒 | 避免长时间连接被检测 |
-
-**步骤A：先展开折叠的年份分组**
-
-1. `browser_snapshot` 查看客户详情页的动态列表
-2. 找到被折叠的年份分组（如 "2025年 (58)"），点击展开
-3. 逐层展开直到最近30条的年份区间全部可见
-4. `browser_wait 2秒`
-
-**步骤B：第一批 — 抓取列表元数据（1次脚本，带延迟）**
-
-先只抓 trailList 列表（不调详情），拿到全部 30 条的元数据：
+脚本自动完成：
+1. trailList 按半年时间窗口分段抓列表元数据（带随机延迟）
+2. 过滤非实质沟通（已读回执/撤回/自动回复/系统消息）
+3. 按每批10条分批调详情 API（邮件正文 + WhatsApp 消息）
+4. 批间停3-5秒，条间500-1500ms随机延迟
+5. 有几条抓几条（不足10条不强制凑数）
 
 ```javascript
 (async () => {
@@ -410,6 +339,7 @@ OKKI CRM 有反自动化检测，短时间内大量 API 调用会触发拦截（
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
 
+  // === 第1步：trailList 按半年分段抓列表元数据 ===
   const now = new Date();
   const periods = [];
   for (let i = 0; i < 6; i++) {
@@ -423,7 +353,6 @@ OKKI CRM 有反自动化检测，短时间内大量 API 调用会触发拦截（
     });
   }
 
-  // 只抓列表元数据，不调详情，每次请求间加随机延迟
   let allItems = [];
   for (const p of periods) {
     if (allItems.length >= 30) break;
@@ -433,155 +362,130 @@ OKKI CRM 有反自动化检测，短时间内大量 API 调用会触发拦截（
       const d = await r.json();
       const list = d.data?.list || d.data || [];
       allItems = allItems.concat(list);
-      await sleep(rand(500, 1200));  // 随机延迟
-      if (list.length < 50 || allItems.length >= 50) break;  // 多抓一些再过滤
+      await sleep(rand(500, 1200));
+      if (list.length < 50 || allItems.length >= 50) break;
     }
-    if (allItems.length < 50) await sleep(rand(800, 1500));  // 批间延迟
+    if (allItems.length < 50) await sleep(rand(800, 1500));
   }
 
-  // 过滤掉非实质沟通：系统消息、订单变更、已读回执、自动回复等
-  // 只要真正的沟通记录：邮件（发出+收到，排除已读回执和自动回复）+ WhatsApp
-  const isRealCommunication = (item) => {
-    // WhatsApp（module=15）保留
-    if (item.module === 15) return true;
-    // 邮件（module=2）需进一步过滤
-    if (item.module === 2) {
-      const subject = (item.subject || '').trim();
-      // 排除已读回执
-      if (/^Read:/i.test(subject)) return false;
-      // 排除撤回邮件
-      if (/^Recall:/i.test(subject)) return false;
-      // 排除自动回复（主题含 auto-reply / out of office / automatic 等）
-      if (/auto.?repl|out.?of.?office|automatic|自动回复|不在办公室/i.test(subject)) return false;
+  // === 第2步：过滤非实质沟通 ===
+  const isReal = (item) => {
+    if (item.module === 15) return true;  // WhatsApp 保留
+    if (item.module === 2) {              // 邮件需进一步过滤
+      const s = (item.subject || '').trim();
+      if (/^Read:/i.test(s)) return false;           // 已读回执
+      if (/^Recall:/i.test(s)) return false;          // 撤回邮件
+      if (/auto.?repl|out.?of.?office|automatic|自动回复|不在办公室/i.test(s)) return false;
       return true;
     }
-    // 其他类型（module 非 2 和 15）全部排除
-    // 包括：订单状态变更(type=806)、销售订单、跟进记录、商机变更、同步记录等
-    return false;
+    return false;  // 其他 module 全部排除（订单变更、跟进记录、商机变更等）
   };
 
-  const filtered = allItems.filter(isRealCommunication).slice(0, 30);
+  const filtered = allItems.filter(isReal).slice(0, 30);
 
-  // 返回元数据摘要（不含正文）
+  // === 第3步：分批抓详情正文（每批10条）===
+  const batchSize = 10;
+  const allResults = [];
+
+  for (let i = 0; i < filtered.length; i += batchSize) {
+    const batch = filtered.slice(i, i + batchSize);
+
+    for (const item of batch) {
+      try {
+        if (item.module === 2) {
+          // 邮件详情
+          const mailId = item.data?.mail_id || item.refer_id || '';
+          const r = await fetch(`/api/mailRead/info?mail_id=${mailId}&user_id=${uid}&skip_view_privilege=1`, {credentials:'include'});
+          const d = await r.json();
+          allResults.push({
+            date: item.gmtCreate,
+            type: item.type === 201 ? '邮件发送' : (item.type === 202 ? '邮件收到' : '邮件'),
+            channel: '邮件',
+            from: item.fromAddr || '',
+            to: item.toAddr || '',
+            subject: item.subject || '',
+            body: d.data?.content || d.data?.body || '',
+            mailId: mailId
+          });
+        } else if (item.module === 15) {
+          // WhatsApp 详情
+          const contactId = item.data?.user_contact_id || item.refer_id || '';
+          const r = await fetch(`/api/customerContactRead/messageList?user_contact_id=${contactId}&scene=drawer&curPage=1&pageSize=50`, {credentials:'include'});
+          const d = await r.json();
+          const msgs = d.data?.list || d.data || [];
+          const txt = msgs.map(m => {
+            const dir = m.send_type === 2 ? '客户' : '我方';
+            return `[${dir} ${m.send_time}] ${m.body || m.content || ''}`;
+          }).join('\n');
+          allResults.push({
+            date: item.gmtCreate,
+            type: 'WhatsApp',
+            channel: 'WhatsApp',
+            messageCount: msgs.length,
+            body: txt,
+            contactId: contactId
+          });
+        }
+        await sleep(rand(500, 1500));  // 条间随机延迟
+      } catch(e) {
+        allResults.push({date: item.gmtCreate, type: '抓取失败', error: e.message, subject: item.subject || ''});
+        await sleep(rand(800, 2000));  // 失败后多等
+      }
+    }
+
+    // 批间等待（不是最后一批才等）
+    if (i + batchSize < filtered.length) {
+      await sleep(rand(3000, 5000));
+    }
+  }
+
+  // === 返回完整结果 ===
   return JSON.stringify({
     rawTotal: allItems.length,
     filteredTotal: filtered.length,
-    removedCount: allItems.length - filtered.length,
-    items: filtered.map(item => ({
-      date: item.gmtCreate,
-      module: item.module,
-      type: item.type,
-      subject: item.subject || '',
-      from: item.fromAddr || '',
-      to: item.toAddr || '',
-      mailId: item.data?.mail_id || item.refer_id || '',
-      contactId: item.data?.user_contact_id || item.refer_id || '',
-      summary: (item.summary || '').substring(0, 200)
-    }))
+    fetchedTotal: allResults.length,
+    emailCount: allResults.filter(r => r.channel === '邮件').length,
+    whatsappCount: allResults.filter(r => r.channel === 'WhatsApp').length,
+    failCount: allResults.filter(r => r.type === '抓取失败').length,
+    results: allResults
   });
 })()
 ```
 
-**步骤C：第二批 — 分批抓详情正文（拆成3批，每批10条，批间停3-5秒）**
+### 1.3 脚本返回结果处理
 
-将上一步拿到的 30 条 items 分成 3 批，每批 10 条分别调详情 API。每次 browser_console 只处理一批：
+脚本返回一个 JSON，agent 直接使用：
 
-```javascript
-(async () => {
-  const uid = document.cookie.match(/userId=(\d+)/)?.[1];
-  if (!uid) return JSON.stringify({error: 'auth_failed'});
+| 字段 | 说明 |
+|------|------|
+| rawTotal | trailList 返回的原始条目数（含系统消息） |
+| filteredTotal | 过滤后的实质沟通条目数 |
+| fetchedTotal | 实际抓到正文的条目数 |
+| emailCount | 邮件数 |
+| whatsappCount | WhatsApp 数 |
+| failCount | 抓取失败数 |
+| results | 完整结果数组，每条含 date/type/channel/from/to/subject/body |
 
-  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-  const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+**若 fetchedTotal < filteredTotal**：部分抓取失败，已抓到的保存，失败的标注原因。
+**若 filteredTotal = 0**：该客户无实质沟通记录，如实告知。
+**若 filteredTotal < 30**：有几条抓几条，不补造。
 
-  // ITEMS_JSON 由调用方替换为当前批次的10条数据
-  const batch = ITEMS_JSON;
+### 1.4 保存结果
 
-  const results = [];
-  for (const item of batch) {
-    try {
-      if (item.module === 2) {
-        // 邮件详情
-        const r = await fetch(
-          `/api/mailRead/info?mail_id=${item.mailId}&user_id=${uid}&skip_view_privilege=1`,
-          {credentials:'include'}
-        );
-        const d = await r.json();
-        results.push({
-          date: item.date,
-          type: item.type === 201 ? '邮件发送' : (item.type === 202 ? '邮件收到' : '邮件'),
-          channel: '邮件',
-          from: item.from,
-          to: item.to,
-          subject: item.subject,
-          body: d.data?.content || d.data?.body || '',
-          readReceipt: !!(item.subject && /^Read:/.test(item.subject))
-        });
-      } else if (item.module === 15) {
-        // WhatsApp 详情
-        const r = await fetch(
-          `/api/customerContactRead/messageList?user_contact_id=${item.contactId}&scene=drawer&curPage=1&pageSize=50`,
-          {credentials:'include'}
-        );
-        const d = await r.json();
-        const msgs = d.data?.list || d.data || [];
-        const txt = msgs.map(m => {
-          const dir = m.send_type === 2 ? '客户' : '我方';
-          return `[${dir} ${m.send_time}] ${m.body || m.content || ''}`;
-        }).join('\n');
-        results.push({
-          date: item.date,
-          type: 'WhatsApp',
-          channel: 'WhatsApp',
-          messageCount: msgs.length,
-          body: txt,
-          readReceipt: false
-        });
-      } else {
-        results.push({
-          date: item.date,
-          type: '其他',
-          channel: '系统',
-          subject: item.subject,
-          body: item.summary || '',
-          readReceipt: false
-        });
-      }
-      await sleep(rand(500, 1500));  // 每条之间随机延迟
-    } catch(e) {
-      results.push({date: item.date, type: '抓取失败', error: e.message, subject: item.subject});
-      await sleep(rand(800, 2000));  // 失败后多等一会
-    }
-  }
-  return JSON.stringify({batchSize: batch.length, results});
-})()
+```
+write → {客户名}_interactions.json
 ```
 
-**步骤D：批间等待**
+返回摘要：总互动数、邮件数（发出/收到）、WhatsApp数、失败数、最新互动日期。
 
-- 第1批执行完 → `browser_wait 3秒`（或 browser_console 运行一个 3-5 秒的 sleep）
-- 第2批执行完 → `browser_wait 4秒`
-- 第3批执行完 → 合并全部结果
-
-**合并逻辑（agent 侧执行）：**
-- 将 3 批的 results 数合并
-- 统计：emailCount / whatsappCount / readReceiptCount / otherCount / failCount
-- 保存到 `{客户名}_interactions.json`
-
-**若中途被拦截（404/超时）：**
-- 已抓到的批次保存，不丢
-- 告知用户"第 N 批被拦截，已保存前 N*10 条数据"
-- 建议用户等待 5-10 分钟后再继续抓取剩余批次
-
-**API 说明：**
+### 1.5 API 参考
 
 | 互动类型 | module | 详情 API |
 |----------|--------|----------|
 | 邮件 | 2 | `/api/mailRead/info?mail_id={mail_id}&user_id={uid}&skip_view_privilege=1` |
 | WhatsApp | 15 | `/api/customerContactRead/messageList?user_contact_id={contact_id}&scene=drawer&curPage=1&pageSize=50` |
-| 其他 | 其他 | 从 trailList 条目的 summary/data 字段直接获取 |
 
-**trailList 正确参数：**
+trailList 正确参数：
 ```
 /api/customerRead/trailList?company_id={cid}
   &curPage=1           ← 是 curPage，不是 pageNum
@@ -592,51 +496,21 @@ OKKI CRM 有反自动化检测，短时间内大量 API 调用会触发拦截（
   &adjust_email_dynamic=0
 ```
 
-**⚠️ 已验证的坑（不要重犯）：**
+### 1.6 已验证的坑
 
 | 坑 | 错误做法 | 正确做法 |
 |----|----------|----------|
-| trailList 参数名 | `pageNum` | **`curPage`**（已验证） |
-| 跨年查询 | 不带 `begin_time`/`end_time` | 按半年一段分段查询，必须带时间参数 |
-| 年份折叠导致漏数据 | 只查当前可见区间 | 先展开折叠年份 → 按时间段分段查询 → 凑满30条 |
+| trailList 参数名 | `pageNum` | **`curPage`** |
+| 跨年查询 | 不带时间参数 | 按半年分段 + `begin_time`/`end_time` |
 | 只抓到邮件 | 加 `type=mail` 过滤 | 不加 type，按 `module` 字段分流 |
-| WhatsApp 方向反 | `send_type === 1` 当客户 | **send_type: 1=我方, 2=客户**（已验证） |
-| WhatsApp 详情API | 调 `trailDetail` 或 `talkRead` | 只能调 `customerContactRead/messageList` |
-| WhatsApp 附件 | `body` 返回 `[object Object]` | 忽略附件，只取 `m.body` 文本内容 |
-| **反自动化拦截** | 一次性 30 条详情全抓 | 分 3 批每批 10 条，批间停 3-5 秒，每条间 500-1500ms 随机延迟 |
-| **列表与详情分两步** | 列表+详情混在一个脚本 | 先只抓列表元数据，再分批调详情，降低单次脚本 API 调用数 |
-| **非实质动态混入** | 不过滤系统消息 | 过滤掉 module≠2 且≠15 的条目，以及已读回执/撤回/自动回复 |
+| WhatsApp 方向反 | `send_type===1` 当客户 | **send_type: 1=我方, 2=客户** |
+| WhatsApp 详情API | 调 `trailDetail` | 只能调 `customerContactRead/messageList` |
+| WhatsApp 附件 | `body` 返回 `[object Object]` | 忽略附件，只取 `m.body` 文本 |
+| 详情页 URL | `/detail?company_id=` | **`/personal?company_id=`** |
+| **反自动化拦截** | 一次性30条全抓 | 脚本内已分批，每批10条，批间3-5秒，条间500-1500ms |
+| **非实质动态混入** | 不过滤系统消息 | 脚本内已过滤 module≠2且≠15 的条目 |
 
-**⚠️ 动态过滤规则（列表抓取后必须执行）：**
-
-trailList 返回的条目中混有大量非实质沟通，必须过滤掉，只保留真正的沟通记录：
-
-| 保留 | 判断条件 |
-|------|----------|
-| ✅ 邮件发出 | module=2 且 type=201，主题不含 Read:/Recall:/auto-reply |
-| ✅ 邮件收到 | module=2 且 type=202，主题不含 Read:/Recall:/auto-reply |
-| ✅ WhatsApp | module=15 |
-
-| 排除 | 判断条件 |
-|------|----------|
-| ❌ 已读回执 | 主题以 `Read:` 开头 |
-| ❌ 撤回邮件 | 主题以 `Recall:` 开头 |
-| ❌ 自动回复 | 主题含 auto-reply/out of office/automatic/自动回复 |
-| ❌ 订单状态变更 | module 为其他值且 type=806 |
-| ❌ 销售订单 | module 为其他值且 summary 含"订单" |
-| ❌ 跟进记录 | module 为其他值且 summary 含"跟进" |
-| ❌ 商机变更/同步 | module 为其他值且非邮件非 WhatsApp |
-
-**若API失败（cookie过期/接口变更），回退方案：**
-- 在客户详情页 → 历史动态 → 全部 → 点开第一条互动 → 重新探测API
-
-### 1.3 保存结果
-
-```
-write → {客户名}_interactions.json
-```
-
-返回摘要：总互动数、邮件数、WhatsApp数、已读回执数、其他类型数、最新互动日期、联系人列表。
+**若 API 失败（cookie 过期/接口变更）**：在客户详情页 → 历史动态 → 全部 → 点开第一条互动 → 重新探测 API。
 
 ---
 
