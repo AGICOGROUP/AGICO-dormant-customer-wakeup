@@ -1,0 +1,38 @@
+{
+  // Phoenix Agent 工具注册配置
+  //
+  // 此文件声明 Agent 可使用哪些工具（注册层），与权限层 (policy.jsonl) 正交。
+  // 注册 ≠ 无条件可调用：运行时校验链为 注册 → 能力层 → 权限层 → 执行。
+  //
+  // TOOLS.md 的工具列表由运行时根据此文件动态注入，不再手动维护。
+  "version": 1,
+
+  // ─── 预设模板 ─────────────────────────────────────────────────────────
+  // 快速启用一组常见工具集。可选值：
+  //   "full"      — 全量 (所有内置工具)
+  //   "standard"  — 标准个人助手 (文件读写、搜索、网络、任务、记忆、会话)
+  //   "developer" — 开发者 (standard + bash、process、browser)
+  //   "minimal"   — 最小集 (read、list、搜索、网络)
+  //   "tl"        — Team Lead (standard + create_agent、list_agent、delete_agent、invite_agent、remove_agent)
+  //   "none"      — 空集，完全手动配置
+  "preset": "none",
+
+  // ─── 内置工具增减 ──────────────────────────────────────────────────────
+  // 在 preset 基础上增删。工具名与 policy.jsonl 中 pattern 的首项一致。
+  //   include: 额外注册的内置工具（追加到 preset）
+  //   exclude: 从 preset 中移除的内置工具
+  // 两者冲突时 exclude 优先。
+  "builtin": {"include":["list","read","grep","glob","ripgrep","write","edit","web_search","web_fetch","product_supplier_search","bash","process","cron","image_generate","image_edit","see_image","video_generate_submit","video_generate_status","get_weather","get_time","get_location","listen_gmail_reply","unlisten_gmail","ask_user","present_files","skill","plugin","memory_search","memory_get","task_create","task_get","task_update","task_list","sessions_spawn","sessions_list","sessions_history","sessions_send"],"exclude":[]},
+
+  // ─── MCP 工具 ─────────────────────────────────────────────────────────
+  // 注册来自 MCP Server 的远程工具。
+  "mcp": [],
+
+  // ─── 条件注册 ─────────────────────────────────────────────────────────
+  // 满足条件时动态增减工具。条件在 session 创建时求值。
+  "conditional": [],
+
+  // ─── 自定义工具说明 ────────────────────────────────────────────────────
+  // 在 TOOLS.md 末尾追加使用说明，不影响工具注册。
+  "notes": ""
+}

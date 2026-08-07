@@ -1,0 +1,44 @@
+{
+  "skills": [
+    {
+      "id": "[Harvest-SubAgent] OKKI CRM 客户互动批量抓取",
+      "name": "[Harvest-SubAgent] OKKI CRM 客户互动批量抓取",
+      "version": "",
+      "enabled": true,
+      "kind": "directory",
+      "entryName": "crm\\okki-interaction-batch",
+      "description": "针对 OKKI CRM (xiaoman.cn) 客户详情页，通过 Console 脚本批量抓取最近 N 条混合类型互动（邮件、WhatsApp、订单状态等）。解决 API 参数差异、分页截断及详情接口权限问题，适用于需要导出完整沟通历史的场景。",
+      "installPath": "C:\\Users\\Administrator\\.accio\\accounts\\1778946028_971001\\agents\\MID-43946028U1785823-C710AA-4826-A91959\\agent-core\\skills\\crm\\okki-interaction-batch"
+    },
+    {
+      "id": "27_customer-winback-automator",
+      "name": "customer-winback-automator",
+      "version": "0.0.86",
+      "enabled": true,
+      "kind": "directory",
+      "entryName": "customer-winback-automator",
+      "description": "Identify and re-engage lapsed customers through automated multi-stage reactivation sequences. Implement tiered discounting based on historical LTV and establish sunsetting protocols for unengaged contacts.",
+      "installPath": "C:\\Users\\Administrator\\.accio\\accounts\\1778946028_971001\\agents\\MID-43946028U1785823-C710AA-4826-A91959\\agent-core\\skills\\customer-winback-automator"
+    },
+    {
+      "id": "dormant-customer-wakeup",
+      "name": "dormant-customer-wakeup",
+      "version": "",
+      "enabled": true,
+      "kind": "directory",
+      "entryName": "dormant-customer-wakeup",
+      "description": "沉睡客户自动筛选与唤醒全流程。自动进入OKKI CRM全部客户列表 →\n筛选最近联系时间>180天的沉睡客户 → 持久化列表并按顺序逐客处理 →\nAPI批量抓取30次沟通记录（邮件+WhatsApp） → 九层深度背调 →\n结合沟通记录+背调画像做深度分析与唤醒策略 → 英文跟进草稿 → 填入CRM。\n触发：任何涉及\"沉睡客户\"、\"休眠客户\"、\"dormant customer\"、\n\"长时间未联系客户\"、\"客户唤醒\"、\"分析沉睡客户\"的请求。\n跨会话进度追踪，不重复分析已完成客户。",
+      "installPath": "C:\\Users\\Administrator\\.accio\\accounts\\1778946028_971001\\agents\\MID-43946028U1785823-C710AA-4826-A91959\\agent-core\\skills\\dormant-customer-wakeup"
+    },
+    {
+      "id": "27_self-improvement",
+      "name": "self-improvement",
+      "version": "0.0.86",
+      "enabled": true,
+      "kind": "directory",
+      "entryName": "self-improvement",
+      "description": "Captures learnings, errors, corrections, and self-reflections into daily diary for continuous improvement. Use when: (1) A command or operation fails unexpectedly, (2) User corrects you, (3) User requests a capability that doesn't exist, (4) An external API or tool fails, (5) Knowledge is outdated or incorrect, (6) A better approach is discovered, (7) You complete significant work and want to evaluate quality. Also review diary before major tasks.",
+      "installPath": "C:\\Users\\Administrator\\.accio\\accounts\\1778946028_971001\\agents\\MID-43946028U1785823-C710AA-4826-A91959\\agent-core\\skills\\self-improvement"
+    }
+  ]
+}
