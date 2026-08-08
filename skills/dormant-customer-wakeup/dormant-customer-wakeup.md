@@ -111,124 +111,142 @@ LTV 数据来源：CRM 客户详情页的「历史订单金额」字段，或 AI
 
 ---
 
-## 阶段零：脚本化极速筛选沉睡客户
+## 阶段零：API级筛选沉睡客户
 
 仅在首次运行、列表不存在、全部已处理完成、或用户明确要求刷新时执行。
 
 ### 设计原则
 
-- **脚本驱动，非 AI 分析**：全部筛选逻辑在 `browser_console` 脚本中完成，不逐行 AI 判断
-- **不翻页盲目抓取**：当前页有符合条件的客户就记录，无则点「下一页」继续
-- **两条硬筛选条件（不可更改）**：
-  1. 最近联系时间 > 180天
-  2. 客户标签不含「无需盘活」
-- **有几个符合条件的就提取几个**，不限制只取10个
-- companyId 留空，进入详情页时从 URL 获取
+- **后端API驱动，非DOM操作**：直接调 `POST /api/customerV3Read/companyList`，一次返回100条，不受虚拟滚动影响
+- **三条硬筛选条件（不可更改）**：
+  1. 最近联系时间（`order_time`）> 180天
+  2. 客户标签（`cus_tag_info[].info_label`）不含「无需盘活」
+  3. 最近动态（`last_trail`）非空 — 空数组`[]`或`last_trail_id===0`表示无沟通记录，直接跳过
+- **有几条符合条件的就提取几个**，不限制数量
+- **同步XHR**：用同步 XMLHttpRequest，确保结果必定返回
 
-### 0.1 导航到全部客户列表
-
-**⚠️ pageSize 限制：OKKI CRM 的 pageSize 最大为100，传500会弹出"pageSize 不能大于100"提示。**
+### 0.1 导航到客户列表
 
 ```
 browser_navigate → https://crm.xiaoman.cn/crm/customer/list?query={"curPage":1,"pageSize":100}
-browser_wait 3秒
 ```
 
 - 用 `browser_info` 查看已有标签，优先复用 CRM 标签页
-- 若无可复用标签或权限被拒，`browser_open` 新标签
-- 直接在全部客户列表上筛选，不进入「超过90天未联系」客群（省去侧边栏点击时间）
+- 不需要 browser_wait，browser_navigate 本身已等待页面加载完成
 
-> ~~取消客群筛选步骤：通过侧边栏进入「超过90天未联系」客群需额外2分钟，不如直接在全部客户列表翻页筛选效率高。脚本的两条硬筛选条件（>180天 + 标签不含「无需盘活」）已能精准过滤。~~
+### 0.2 API 字段映射
 
-### 0.2 页面 DOM 结构参考
+| 列名 | API 字段 | 示例值 | 说明 |
+|------|---------|--------|------|
+| 公司名称 | `name` | 苏丹SABAEIC TRADING | 客户名称 |
+| companyId | `company_id` | 80065873412390 | 数字，需转字符串 |
+| 客户标签 | `cus_tag_info[].info_label` | "无需盘活" | 数组，多个标签 |
+| 最近联系时间 | `order_time` | 2026-01-20 15:18:07 | 后端维护的最近活动时间 |
+| 最近动态 | `last_trail` | 对象 或 空数组`[]` | 对象=有动态，`[]`=无动态 |
+| 最近动态ID | `last_trail_id` | 105679342731028 或 0 | 0=无动态 |
 
-| 元素 | 选择器 | 说明 |
-|------|--------|------|
-| 数据行 | `div.row-item.row-item-level-1` | 不含 `row-item__title` |
-| 客户名 | `a[href*="company_id"]` | 第3列 `data-cci="2"` |
-| 客户标签 | `.tag__overflow-item:not(.tag__overflow-item-rest) span` | 第4列 `data-cci="3"` |
-| 最近联系时间 | `div.cell[data-cci="6"] .cell-inner` | 文本含"X天前"或"YYYY-MM-DD" |
-| 下一页按钮 | `li.okki-pagination-next` | 到末页 class 含 `okki-pagination-disabled` |
+### 0.3 API级筛选脚本（核心）
 
-### 0.3 极速筛选脚本（核心）
-
-`browser_console evaluate` 运行以下脚本，**一次执行完成当前页的筛选**：
+`browser_console evaluate` 运行以下脚本，**一次执行完成一整页100条的筛选**：
 
 ```javascript
 (() => {
-  const TODAY = new Date();
-  const dateToDays = (dateStr) => {
-    const m = dateStr.match(/(\d{4})-(\d{2})-(\d{2})/);
+  function syncPost(url, body) {
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', url, false);
+    xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+    xhr.withCredentials = true;
+    xhr.send(body);
+    try { return JSON.parse(xhr.responseText); } catch(e) { return {error: xhr.status}; }
+  }
+
+  // PAGE_NUM 替换为当前页码（从2开始，第1页通常全是<180天的新客户）
+  var body = 'keyword=&canReuse=0&high_light_flag=1&swarm_id=1&show_all=0&curPage=PAGE_NUM&pageSize=100&show_field_key=company.private.list.field&sort_scene=search&layout_flag=1&user_num[0]=1&user_num[1]=2';
+  var d = syncPost('/api/customerV3Read/companyList', body);
+  var list = (d.data && d.data.list) || d.data || [];
+  var totalItem = d.data && d.data.totalItem || 0;
+
+  function daysSince(dateStr) {
+    if (!dateStr) return null;
+    var m = dateStr.match(/(\d{4})-(\d{2})-(\d{2})/);
     if (!m) return null;
-    const d = new Date(parseInt(m[1]), parseInt(m[2])-1, parseInt(m[3]));
-    return Math.floor((TODAY - d) / 86400000);
-  };
+    var d = new Date(parseInt(m[1]), parseInt(m[2])-1, parseInt(m[3]));
+    return Math.floor((new Date() - d) / 86400000);
+  }
 
-  const rows = document.querySelectorAll('div.row-item.row-item-level-1');
-  const qualified = [];
-  const skipped = { noName: 0, under180: 0, noRevive: 0 };
+  var qualified = [];
+  var under180 = 0, noRevive = 0, noTrail = 0;
 
-  rows.forEach(row => {
-    // 1. 提取客户名 + companyId
-    const link = row.querySelector('a[href*="company_id"]');
-    if (!link) { skipped.noName++; return; }
-    const name = link.textContent.trim();
-    if (!name || name.length < 2) { skipped.noName++; return; }
-    const href = link.getAttribute('href') || '';
-    const cid = (href.match(/company_id=(\d+)/) || [])[1] || '';
+  list.forEach(function(item) {
+    var name = item.name || '';
+    var companyId = String(item.company_id || '');
+    var orderTime = item.order_time || '';
+    var days = daysSince(orderTime);
 
-    // 2. 提取客户标签
-    const tagSpans = row.querySelectorAll('.tag__overflow-item:not(.tag__overflow-item-rest) span');
-    const tags = Array.from(tagSpans).map(s => s.textContent.trim());
-    const hasNoRevive = tags.some(t => t.includes('无需盘活'));
+    // 提取标签
+    var tags = [];
+    if (item.cus_tag_info && Array.isArray(item.cus_tag_info)) {
+      tags = item.cus_tag_info.map(function(t) { return t.info_label || ''; }).filter(function(t) { return t; });
+    }
+    var hasNoRevive = tags.some(function(t) { return t.includes('无需盘活'); });
 
-    // 3. 提取最近联系时间
-    const timeCell = row.querySelector('div.cell[data-cci="6"] .cell-inner') || row.querySelector('div.cell[data-cci="6"]');
-    const timeText = timeCell ? timeCell.textContent.trim() : '';
-    let days = null;
-    const daysMatch = timeText.match(/(\d+)天前/);
-    if (daysMatch) {
-      days = parseInt(daysMatch[1]);
-    } else {
-      const dateMatch = timeText.match(/(\d{4}-\d{2}-\d{2})/);
-      if (dateMatch) days = dateToDays(dateMatch[1]);
+    // 判断最近动态是否为空
+    var lastTrail = item.last_trail;
+    var hasTrail = !Array.isArray(lastTrail) && lastTrail && typeof lastTrail === 'object';
+    var lastTrailId = item.last_trail_id || 0;
+
+    // 硬筛选1：最近联系 > 180天
+    if (days === null || days <= 180) { under180++; return; }
+    // 硬筛选2：标签不含「无需盘活」
+    if (hasNoRevive) { noRevive++; return; }
+    // 硬筛选3：最近动态非空（跳过无沟通记录的客户）
+    if (!hasTrail || lastTrailId === 0) { noTrail++; return; }
+
+    // 提取最近动态摘要
+    var trailSummary = '';
+    if (hasTrail) {
+      trailSummary = lastTrail.node_type_name || lastTrail.type_name || '';
+      if (lastTrail.data && lastTrail.data.subject) {
+        trailSummary += ' - ' + lastTrail.data.subject;
+      }
     }
 
-    // 4. 硬筛选条件1：最近联系 > 180天
-    if (days === null || days <= 180) { skipped.under180++; return; }
-
-    // 5. 硬筛选条件2：标签不含「无需盘活」
-    if (hasNoRevive) { skipped.noRevive++; return; }
-
-    qualified.push({ name, companyId: cid, sleepDays: days, tags, lastContactText: timeText });
+    qualified.push({
+      name: name,
+      companyId: companyId,
+      sleepDays: days,
+      orderTime: orderTime,
+      tags: tags,
+      lastTrailSummary: trailSummary.substring(0, 100)
+    });
   });
 
-  // 检查是否有下一页
-  const nextBtn = document.querySelector('li.okki-pagination-next');
-  const hasNext = nextBtn && !nextBtn.classList.contains('okki-pagination-disabled');
-
   return JSON.stringify({
-    pageRows: rows.length,
+    page: PAGE_NUM,
+    totalItems: list.length,
+    totalCustomerCount: totalItem,
     qualifiedCount: qualified.length,
-    qualified: qualified,
-    skipped: skipped,
-    hasNextPage: hasNext
+    under180: under180,
+    noRevive: noRevive,
+    noTrail: noTrail,
+    qualified: qualified
   });
 })()
 ```
 
+> **PAGE_NUM 替换规则**：从第2页开始（第1页通常是<180天的新客户），每次翻页递增 curPage。如果第2页就有大量合格客户，不必翻到第3页。
+
 ### 0.4 翻页逻辑
 
-脚本返回后根据 `hasNextPage` 和 `qualifiedCount` 决定下一步：
+脚本返回后根据 `qualifiedCount` 和 `totalCustomerCount` 决定下一步：
 
 | 条件 | 动作 |
 |------|------|
-| `hasNextPage=true` 且 `qualifiedCount=0` | 点击 `li.okki-pagination-next` → `browser_wait 2秒` → 重新执行0.3脚本 |
-| `hasNextPage=true` 且 `qualifiedCount>0` | 记录当前页合格客户 → 继续翻页找更多（点击下一页 → 0.3脚本） |
-| `hasNextPage=true` 且当前页客户已全部记录 | 继续翻页找更多 |
-| `hasNextPage=false` | 到末页，合并所有页的合格客户，进入0.5保存 |
+| `qualifiedCount > 0` | 记录合格客户。如果已够用（如≥20个），停止；否则继续翻页 |
+| `qualifiedCount = 0` | 翻到下一页（PAGE_NUM+1），重新执行0.3脚本 |
+| `page * 100 >= totalCustomerCount` | 到末页，合并所有页的合格客户，进入0.5保存 |
 
-> 翻页方式：`browser_click` 点击 `li.okki-pagination-next` → `browser_wait 2秒` → 重新执行0.3脚本
+> 翻页方式：将脚本中的 `PAGE_NUM` 替换为下一页页码，重新执行 `browser_console evaluate`。不需要 browser_wait，同步XHR自带阻塞。
 
 ### 0.5 保存列表
 
@@ -236,18 +254,20 @@ browser_wait 3秒
 
 ```json
 {
-  "generatedAt": "2026-08-07T18:00:00+08:00",
+  "generatedAt": "2026-08-08T20:00:00+08:00",
   "filterDays": 180,
   "excludeTags": ["无需盘活"],
+  "source": "API /api/customerV3Read/companyList pageSize=100",
   "total": N,
   "customers": [
     {
       "index": 1,
-      "companyId": "123456",
-      "name": "ABC Corp",
-      "sleepDays": 365,
-      "lastContactText": "365天前",
-      "tags": ["7天内新询盘"],
+      "companyId": "80065873412390",
+      "name": "苏丹SABAEIC TRADING",
+      "sleepDays": 184,
+      "orderTime": "2026-02-05 09:59:01",
+      "tags": [],
+      "lastTrailSummary": "发送邮件 - Re:...",
       "status": "pending"
     }
   ]
@@ -259,12 +279,12 @@ browser_wait 3秒
 ```markdown
 ## 沉睡客户筛选结果
 
-> 筛选条件：最近联系>180天 且 标签不含「无需盘活」| 共 {N} 个合格客户
+> 筛选条件：最近联系>180天 + 标签不含「无需盘活」 + 最近动态非空 | 共 {N} 个合格客户
 
-| 序号 | 客户名称 | 沉睡天数 | 标签 |
-|------|----------|----------|------|
-| 1 | XXX | 365天 | 标签1, 标签2 |
-| ... | ... | ... | ... |
+| 序号 | 客户名称 | 沉睡天数 | 最近动态 | 标签 |
+|------|----------|----------|----------|------|
+| 1 | XXX | 184天 | 发送邮件 - Re:... | — |
+| ... | ... | ... | ... | ... |
 
 现在进入第 1 个客户详情页开始抓取沟通记录。
 ```
@@ -277,30 +297,23 @@ browser_wait 3秒
 - 用户确认 → 重新执行阶段零抓取下一批（跳过已处理的可通过名称去重）
 - 用户拒绝 → 保存当前进度，下次继续
 
-### 0.8 DOM 结构变更兜底
+### 0.8 API 失败兜底
 
-如果0.3脚本返回 `pageRows=0`，说明 DOM 结构已变更。执行以下探测脚本：
+如果0.3脚本返回 `{error: xxx}`，说明 cookie 过期或接口变更：
+1. 在客户列表页 `browser_snapshot` 查看页面是否正常加载
+2. 如果页面正常但API失败，尝试 `GET /api/customerRead/companyList?curPage=2&pageSize=100`（备选API）
+3. 如果备选API也失败，回退到DOM方案：对虚拟滚动容器循环 scrollTop 步进收集
 
-```javascript
-(() => {
-  const links = document.querySelectorAll('a[href*="company_id"]');
-  return JSON.stringify({
-    linkCount: links.length,
-    sample: links[0] ? {
-      text: links[0].textContent.trim(),
-      href: links[0].getAttribute('href'),
-      classes: links[0].className,
-      ancestorClasses: (() => {
-        let el = links[0], chain = [];
-        for (let i=0; i<5; i++) { el = el.parentElement; if(!el) break; chain.push({tag: el.tagName, classes: el.className}); }
-        return chain;
-      })()
-    } : null
-  });
-})()
-```
+### 0.9 已验证的坑
 
-根据探测结果调整选择器，重新执行0.3脚本。
+| 坑 | 错误做法 | 正确做法 |
+|----|----------|----------|
+| **虚拟滚动** | 用 `querySelectorAll('div.row-item')` 试图拿全部100行 | **DOM只有视口内~18行**，改用后端API一次性返回100条 |
+| **日期解析** | 正则匹配可见文本"200天前" | **用 `order_time` 字段**（如 `2026-01-20 15:18:07`），不依赖DOM文本 |
+| **最近动态空判断** | 不判断直接处理 | **`last_trail` 为空数组`[]` 或 `last_trail_id===0` 时跳过**，无沟通记录的客户只会浪费时间 |
+| **pageSize>100** | URL传 pageSize=500 | **pageSize 最大100**，传500弹窗报错 |
+| **客户标签** | 用DOM的 `.tag__overflow-item span` | **用 `cus_tag_info[].info_label`**，API直接返回标签名 |
+| **companyId** | 从DOM链接href中提取 | **用 `company_id` 字段**，API直接返回 |
 
 ---
 
