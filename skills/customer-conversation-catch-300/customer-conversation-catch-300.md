@@ -67,10 +67,18 @@ function syncGet(url) {
 var now = new Date();
 var periods = [];
 for (var i = 0; i < 6; i++) {
-  var end = new Date(now.getFullYear(), now.getMonth() - i * 6, 0, 23, 59, 59);
-  var start = new Date(now.getFullYear(), now.getMonth() - (i + 1) * 6, 0, 23, 59, 59);
-  start.setMonth(start.getMonth() + 1, 1);
-  start.setHours(0, 0, 0, 0);
+  var end, start;
+  if (i === 0) {
+    // Bug修复：i=0时end不能是"本月第0天"（=上月最后一天），否则本月记录全部漏掉
+    // 第一个时间段的end改为now（当前时刻），覆盖本月所有记录
+    end = now;
+    start = new Date(now.getFullYear(), now.getMonth() - 6, 1, 0, 0, 0, 0);
+  } else {
+    end = new Date(now.getFullYear(), now.getMonth() - i * 6, 0, 23, 59, 59);
+    start = new Date(now.getFullYear(), now.getMonth() - (i + 1) * 6, 0, 23, 59, 59);
+    start.setMonth(start.getMonth() + 1, 1);
+    start.setHours(0, 0, 0, 0);
+  }
   // 用本地时间格式，不用toISOString（UTC格式被API忽略）
   periods.push({
     begin: start.getFullYear() + '-' + String(start.getMonth()+1).padStart(2,'0') + '-' + String(start.getDate()).padStart(2,'0') + ' 00:00:00',
