@@ -315,205 +315,50 @@ browser_navigate → https://crm.xiaoman.cn/crm/customer/personal?company_id={co
 ```
 
 > **⚠️ 详情页 URL 是 `/personal?company_id=`，不是 `/detail?company_id=`（后者会 404）。**
-> **⚠️ 不需要 browser_wait，导航完成后直接执行1.2脚本。browser_navigate 本身已等待页面加载完成。**
 
-### 1.2 一键抓取脚本（trailList 元数据 + 过滤 + 分批详情正文）
+### 1.2 调用 customer-conversation-catch-300 skill 抓取沟通记录
 
-**进入详情页后，执行一次 `browser_console evaluate` 即可完成全部抓取。**
+**进入详情页后，调用 `customer-conversation-catch-300` skill 执行沟通记录抓取。**
 
-脚本自动完成：
-1. trailList 按半年时间窗口分段抓列表元数据（带随机延迟）
-2. 过滤非实质沟通（已读回执/撤回/自动回复/系统消息）
-3. 按每批10条分批调详情 API（邮件正文 + WhatsApp 消息）
-4. **批间停9-13秒**，条间1-3秒随机延迟
-5. 有几条抓几条（不足10条不强制凑数）
+> 该 skill 使用同步XHR + 分次evaluate架构，自带反自动化分批策略：
+> - 邮件：分3批每批10封，批间 browser_wait 3-9秒
+> - WhatsApp：分3页每页100条，页间 browser_wait 2-5秒
+>
+> 详见 `customer-conversation-catch-300` skill 文档。
 
-```javascript
-(async () => {
-  const uid = document.cookie.match(/userId=(\d+)/)?.[1];
-  const cid = window.location.href.match(/company_id=(\d+)/)?.[1];
-  if (!uid || !cid) return JSON.stringify({error: 'auth_failed', uid, cid});
+调用方式：使用 Skill 工具读取 `customer-conversation-catch-300` 的 SKILL.md，按其步骤执行：
+1. （如已有 companyId 跳过搜索）
+2. 导航到客户详情页（已在1.1完成）
+3. 执行 trailList 元数据抓取（步骤3）
+4. 邮件详情分批抓取（步骤4，3批×10封）
+5. WhatsApp 详情分页抓取（步骤5，3页×100条）
+6. 合并结果并保存
 
-  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-  const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+### 1.3 结果处理
 
-  // === 第1步：trailList 按半年分段抓列表元数据 ===
-  const now = new Date();
-  const periods = [];
-  for (let i = 0; i < 6; i++) {
-    const end = new Date(now.getFullYear(), now.getMonth() - i * 6 + 1, 0, 23, 59, 59);
-    const start = new Date(now.getFullYear(), now.getMonth() - (i + 1) * 6 + 1, 0, 23, 59, 59);
-    start.setMonth(start.getMonth() + 1, 1);
-    start.setHours(0, 0, 0, 0);
-    periods.push({
-      begin: start.toISOString().replace('T', ' ').substring(0, 19),
-      end: end.toISOString().replace('T', ' ').substring(0, 19)
-    });
-  }
-
-  let allItems = [];
-  for (const p of periods) {
-    if (allItems.length >= 30) break;
-    for (let page = 1; page <= 2; page++) {
-      const url = `/api/customerRead/trailList?company_id=${cid}&curPage=${page}&pageSize=50&stat_info=0&begin_time=${encodeURIComponent(p.begin)}&end_time=${encodeURIComponent(p.end)}&adjust_email_dynamic=0`;
-      const r = await fetch(url, {credentials:'include'});
-      const d = await r.json();
-      const list = d.data?.list || d.data || [];
-      allItems = allItems.concat(list);
-      await sleep(rand(500, 1200));
-      if (list.length < 50 || allItems.length >= 50) break;
-    }
-    if (allItems.length < 50) await sleep(rand(800, 1500));
-  }
-
-  // === 第2步：过滤非实质沟通 ===
-  const isReal = (item) => {
-    if (item.module === 15) return true;  // WhatsApp 保留
-    if (item.module === 2) {              // 邮件需进一步过滤
-      const s = (item.subject || '').trim();
-      if (/^Read:/i.test(s)) return false;           // 已读回执
-      if (/^Recall:/i.test(s)) return false;          // 撤回邮件
-      if (/auto.?repl|out.?of.?office|automatic|自动回复|不在办公室/i.test(s)) return false;
-      return true;
-    }
-    return false;  // 其他 module 全部排除（订单变更、跟进记录、商机变更等）
-  };
-
-  const filtered = allItems.filter(isReal).slice(0, 30);
-
-  // 如果没有实质沟通记录，直接返回（agent 标记 skipped 跳到下一个）
-  if (filtered.length === 0) {
-    return JSON.stringify({rawTotal: allItems.length, filteredTotal: 0, fetchedTotal: 0, emailCount: 0, whatsappCount: 0, failCount: 0, results: []});
-  }
-
-  // === 第3步：分批抓详情正文（每批10条，批间9-13秒）===
-  const batchSize = 10;
-  const allResults = [];
-
-  for (let i = 0; i < filtered.length; i += batchSize) {
-    const batch = filtered.slice(i, i + batchSize);
-
-    for (const item of batch) {
-      try {
-        if (item.module === 2) {
-          // 邮件详情
-          const mailId = item.data?.mail_id || item.refer_id || '';
-          const r = await fetch(`/api/mailRead/info?mail_id=${mailId}&user_id=${uid}&skip_view_privilege=1`, {credentials:'include'});
-          const d = await r.json();
-          allResults.push({
-            date: item.gmtCreate,
-            type: item.type === 201 ? '邮件发送' : (item.type === 202 ? '邮件收到' : '邮件'),
-            channel: '邮件',
-            from: item.fromAddr || '',
-            to: item.toAddr || '',
-            subject: item.subject || '',
-            body: d.data?.content || d.data?.body || '',
-            mailId: mailId
-          });
-        } else if (item.module === 15) {
-          // WhatsApp 详情
-          const contactId = item.data?.user_contact_id || item.refer_id || '';
-          const r = await fetch(`/api/customerContactRead/messageList?user_contact_id=${contactId}&scene=drawer&curPage=1&pageSize=50`, {credentials:'include'});
-          const d = await r.json();
-          const msgs = d.data?.list || d.data || [];
-          const txt = msgs.map(m => {
-            const dir = m.send_type === 2 ? '客户' : '我方';
-            return `[${dir} ${m.send_time}] ${m.body || m.content || ''}`;
-          }).join('\n');
-          allResults.push({
-            date: item.gmtCreate,
-            type: 'WhatsApp',
-            channel: 'WhatsApp',
-            messageCount: msgs.length,
-            body: txt,
-            contactId: contactId
-          });
-        }
-        await sleep(rand(1000, 3000));  // 条间随机延迟1-3秒
-      } catch(e) {
-        allResults.push({date: item.gmtCreate, type: '抓取失败', error: e.message, subject: item.subject || ''});
-        await sleep(rand(2000, 4000));  // 失败后多等
-      }
-    }
-
-    // 批间等待9-13秒（不是最后一批才等）
-    if (i + batchSize < filtered.length) {
-      await sleep(rand(9000, 13000));
-    }
-  }
-
-  // === 返回完整结果 ===
-  return JSON.stringify({
-    rawTotal: allItems.length,
-    filteredTotal: filtered.length,
-    fetchedTotal: allResults.length,
-    emailCount: allResults.filter(r => r.channel === '邮件').length,
-    whatsappCount: allResults.filter(r => r.channel === 'WhatsApp').length,
-    failCount: allResults.filter(r => r.type === '抓取失败').length,
-    results: allResults
-  });
-})()
-```
-
-### 1.3 脚本返回结果处理
-
-脚本返回一个 JSON，agent 直接使用：
+catch-300 返回的 JSON 结构：
 
 | 字段 | 说明 |
 |------|------|
 | rawTotal | trailList 返回的原始条目数（含系统消息） |
 | filteredTotal | 过滤后的实质沟通条目数 |
-| fetchedTotal | 实际抓到正文的条目数 |
-| emailCount | 邮件数 |
-| whatsappCount | WhatsApp 数 |
+| emailCount | 邮件正文数量 |
+| whatsappCount | WhatsApp 联系人数量 |
+| whatsappTotalMessages | WhatsApp 消息总条数 |
 | failCount | 抓取失败数 |
-| results | 完整结果数组，每条含 date/type/channel/from/to/subject/body |
+| results | 完整结果数组，每条含 date/type/channel/subject/body |
 
-**若 fetchedTotal < filteredTotal**：部分抓取失败，已抓到的保存，失败的标注原因。
 **若 filteredTotal = 0**：该客户无实质沟通记录，将 `status` 标记为 `skipped`，`skipReason` 记录"沟通记录=0"，直接跳到下一个客户，不进入后续阶段。
 **若 filteredTotal < 30**：有几条抓几条，不补造。
+**若 failCount > 0**：已抓到的保存，失败的标注原因，不阻塞后续流程。
 
 ### 1.4 保存结果
 
 ```
-write → {客户名}_interactions.json
+write → {客户名}_communications.json
 ```
 
-返回摘要：总互动数、邮件数（发出/收到）、WhatsApp数、失败数、最新互动日期。
-
-### 1.5 API 参考
-
-| 互动类型 | module | 详情 API |
-|----------|--------|----------|
-| 邮件 | 2 | `/api/mailRead/info?mail_id={mail_id}&user_id={uid}&skip_view_privilege=1` |
-| WhatsApp | 15 | `/api/customerContactRead/messageList?user_contact_id={contact_id}&scene=drawer&curPage=1&pageSize=50` |
-
-trailList 正确参数：
-```
-/api/customerRead/trailList?company_id={cid}
-  &curPage=1           ← 是 curPage，不是 pageNum
-  &pageSize=50
-  &begin_time=2025-01-01+00:00:00   ← 必须带时间范围
-  &end_time=2025-12-31+23:59:59
-  &stat_info=0
-  &adjust_email_dynamic=0
-```
-
-### 1.6 已验证的坑
-
-| 坑 | 错误做法 | 正确做法 |
-|----|----------|----------|
-| trailList 参数名 | `pageNum` | **`curPage`** |
-| 跨年查询 | 不带时间参数 | 按半年分段 + `begin_time`/`end_time` |
-| 只抓到邮件 | 加 `type=mail` 过滤 | 不加 type，按 `module` 字段分流 |
-| WhatsApp 方向反 | `send_type===1` 当客户 | **send_type: 1=我方, 2=客户** |
-| WhatsApp 详情API | 调 `trailDetail` | 只能调 `customerContactRead/messageList` |
-| WhatsApp 附件 | `body` 返回 `[object Object]` | 忽略附件，只取 `m.body` 文本 |
-| 详情页 URL | `/detail?company_id=` | **`/personal?company_id=`** |
-| **反自动化拦截** | 一次性30条全抓 | 脚本内已分批，每批10条，批间3-5秒，条间500-1500ms |
-| **非实质动态混入** | 不过滤系统消息 | 脚本内已过滤 module≠2且≠15 的条目 |
-
-**若 API 失败（cookie 过期/接口变更）**：在客户详情页 → 历史动态 → 全部 → 点开第一条互动 → 重新探测 API。
+返回摘要：总互动数、邮件数（发出/收到）、WhatsApp会话数及消息数、失败数、最新互动日期。
 
 ---
 
