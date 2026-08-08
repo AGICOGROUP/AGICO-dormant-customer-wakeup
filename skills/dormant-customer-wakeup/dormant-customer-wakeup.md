@@ -726,19 +726,108 @@ write → {客户名}_background.html
 
 在客户详情页的邮件列表中，需要找到**客户发来的最后一封邮件**（不是我方发出的最后一封）。这是回复的锚点。
 
-`browser_console evaluate` 运行以下脚本，它会自动找到最后一封"收到邮件"并点击选中：
+**⚠️ 两种场景：**
+- **场景A（有客户回信）**：找到"收到邮件"→ 点击选中 → 展开快速回复 → 写入正文
+- **场景B（无客户回信）**：全部邮件都是我方发出的 → 点击顶部"写邮件"按钮 → 在写信编辑器中写入正文
+
+`browser_console evaluate` 运行以下脚本，它会自动判断场景：
 
 ```javascript
 (() => {
-  // 找所有邮件项，按 DOM 顺序（最新在上）
   var items = document.querySelectorAll('div.component-dynamic-item-email');
   var found = null;
+  var foundIndex = -1;
+  var foundType = '';
+  
+  // 场景A：先找客户回信
   for (var i = 0; i < items.length; i++) {
     var text = items[i].innerText || '';
-    // 判断是否为客户回信（含"收到邮件"标识）
     if (text.includes('收到邮件')) {
       found = items[i];
-      // 点击选中这封邮件
+      foundIndex = i;
+      foundType = 'incoming';
+      items[i].click();
+      break;
+    }
+  }
+  
+  // 场景B：没有客户回信，找最后一封我方发出的邮件（列表倒序，第一个"发送邮件"就是最新的）
+  if (!found) {
+    for (var i = 0; i < items.length; i++) {
+      var text = items[i].innerText || '';
+      if (text.includes('发送邮件')) {
+        found = items[i];
+        foundIndex = i;
+        foundType = 'outgoing';
+        items[i].click();
+        break;
+      }
+    }
+  }
+  
+  if (!found) {
+    return JSON.stringify({error: 'no_mail_found', totalItems: items.length});
+  }
+  
+  return JSON.stringify({
+    success: true,
+    selectedIndex: foundIndex,
+    mailType: foundType,
+    preview: found.innerText.substring(0, 200)
+  });
+})()
+```
+
+> `browser_wait 2秒` 等待邮件详情加载
+>
+> **⚠️ Vue 异步渲染延迟**：点击选中邮件后，详情抽屉可能为空。如果 `browser_wait 2秒` 后详情仍未加载，补点邮件卡片内的主题链接。
+>
+> **⚠️ 场景B（outgoing）的后续步骤不同**：如果返回 `mailType: 'outgoing'`，说明没有客户回信，快速回复框不会出现。此时改用"写邮件"按钮入口（见步骤2-B）。
+
+#### 步骤2-A：点击"快速回复"展开编辑器（场景A：有客户回信）
+
+`browser_console evaluate` 点击快速回复触发器：
+
+```javascript
+(() => {
+  var trigger = document.querySelector('div.mail-detail-quick-reply div.expand-trigger');
+  if (!trigger) trigger = document.querySelector('.expand-trigger');
+  if (!trigger) return JSON.stringify({error: 'no_quick_reply_trigger'});
+  trigger.click();
+  return JSON.stringify({success: true});
+})()
+```
+
+> `browser_wait 2秒` 等待编辑器展开
+
+#### 步骤2-B：点击"写邮件"按钮（场景B：无客户回信）
+
+如果步骤1返回 `mailType: 'outgoing'`，用 `browser_snapshot` 找到客户详情页顶部的"写邮件"按钮（通常 ref 为 e20 左右），`browser_click` 点击它。
+
+或者 `browser_console evaluate` 直接点击：
+
+```javascript
+(() => {
+  var btns = document.querySelectorAll('button');
+  for (var i = 0; i < btns.length; i++) {
+    if (btns[i].textContent.trim() === '写邮件') {
+      btns[i].click();
+      return JSON.stringify({success: true});
+    }
+  }
+  return JSON.stringify({error: 'no_write_mail_button'});
+})()
+```
+
+> `browser_wait 3秒` 等待写信编辑器加载
+
+> 写信编辑器的 textarea 选择器可能与快速回复不同。用以下脚本查找：
+> ```javascript
+> (() => {
+>   var editors = document.querySelectorAll('textarea, [contenteditable="true"], .ql-editor');
+>   return JSON.stringify({count: editors.length, editors: Array.from(editors).map(e => ({tag: e.tagName, classes: typeof e.className === 'string' ? e.className.substring(0,100) : '', id: e.id || '', placeholder: e.getAttribute('placeholder') || ''}))});
+> })()
+> ```
       items[i].click();
       break;
     }
