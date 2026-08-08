@@ -757,6 +757,8 @@ write → {客户名}_background.html
 ```
 
 > `browser_wait 2秒` 等待邮件详情加载
+>
+> **⚠️ Vue 异步渲染延迟**：点击选中邮件后，详情抽屉可能为空。如果 `browser_wait 2秒` 后详情仍未加载，补点邮件卡片内的主题链接。这是因为 OKKI CRM 使用 Vue portal 异步渲染，首次 click 只触发了选中态，详情内容需要二次触发。
 
 #### 步骤2：点击"快速回复"展开编辑器
 
@@ -806,6 +808,8 @@ write → {客户名}_background.html
 ```
 
 > **MAIL_BODY 替换规则**：将阶段三生成的邮件正文（纯文本，换行用 `\n`）作为字符串赋值给 `body` 变量。例如：`var body = "Dear Renata,\n\nAs Mexico approaches its Independence Day...";`
+>
+> **⚠️ Vue 响应式延迟**：写入正文后发送按钮可能仍为 disabled，这是 Vue 响应式刷新延迟。等待 1-2 秒后复检，发送按钮会自动启用。脚本已返回 `sendButtonEnabled` 状态，如为 false，执行 `browser_wait 2秒` 后重新检查。
 
 #### 步骤4：截图确认 + 等待用户手动发送
 
