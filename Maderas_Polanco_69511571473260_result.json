@@ -1,0 +1,69 @@
+{
+  "customer": {
+    "name": "墨西哥 Maderas Polanco 单面机",
+    "companyId": "69511571473260",
+    "url": "https://crm.xiaoman.cn/crm/customer/personal?company_id=69511571473260",
+    "title": "客户详情-OKKI 客户管理",
+    "domains": [],
+    "country": "墨西哥",
+    "contact": "Renata López",
+    "email": "renata@maderaspolanco.com",
+    "phone": "+52 1 33 1892 5157",
+    "customerNo": "KH251107015",
+    "owner": "李铭轩(Ali Li)",
+    "stage": "潜在客户",
+    "group": "百创公海",
+    "tags": ["在谈大额商机"],
+    "opportunity": {"name": "墨西哥 Maderas Polanco 2000-150-3瓦线", "code": "O7517", "amount": "USD 25.49万", "endDate": "2028-01-31", "stage": "报价/商谈方案"},
+    "pageTextPreview": "客户 私海客户 墨西哥Maderas Polanco 单面机 编号 KH251107015 墨西哥 21:18 UTC-6 标签：在谈大额商机 跟进人: 李铭轩(Ali Li) 客户阶段: 潜在客户 公海分组: 百创公海 联系人(1) Renata López 主 写信2次，成功2次 邮箱 renata@maderaspolanco.com 社交平台 +52 1 33 1892 5157 性别 不设置 进行中的商机（1）墨西哥 Maderas Polanco 2000-150-3瓦线 销售金额 USD 25.49万 结束日期 2028-01-31 动态: 全部(5) 跟进记录(0) 往来邮件(4) 聊天记录(0) 其它(1) — 2025-12-03 新建商机 O7517 报价/商谈方案 USD 254900.00 结束2028-01-31；2025-12-02 12:36 收到邮件×2 Renata→al@agicogroup.com；2025-12-02 09:49 发送邮件 al@agicogroup.com→Renata（附 Proposal of fully-auto 2000-150-3 corrugated production line.pdf 1MB）；2025-11-07 23:49 发送邮件 al@agicogroup.com→Renata"
+  },
+  "trailList": {
+    "rawTotal": 30,
+    "filteredTotal": 24,
+    "dedupTotal": 24,
+    "emailCount": 24,
+    "whatsappCount": 0,
+    "uniqueEmailIds": 4,
+    "note": "trailList中邮件按时间段重复返回，24条实为4封唯一邮件（页面显示往来邮件4封）"
+  },
+  "emails": [
+    {
+      "mailId": "72750148486569",
+      "type": 202,
+      "channel": "邮件",
+      "direction": "邮件收到 (Renata → al@agicogroup.com)",
+      "date": "2025-12-02 12:36",
+      "subject": "Re:  Let's talk about the single face you need to AGICO GROUP",
+      "body": "I think Is not necessary complete automatic (Renata回复，引用Ali 12月1日西班牙语邮件：Querida Renata... línea de producción totalmente automática... Ancho de alimentación de papel efectivo de 2000 mm, velocidad de diseño de 150 m/min, 220 V, 50 Hz, 3 fases. Saludos cordiales, Ali)"
+    },
+    {
+      "mailId": "72750148404024",
+      "type": 202,
+      "channel": "邮件",
+      "direction": "邮件收到 (Renata → al@agicogroup.com)",
+      "date": "2025-12-02 12:36",
+      "subject": "Re:  Let's talk about the single face you need to AGICO GROUP",
+      "body": "I think Is not necessary complete automatic (内容与72750148486569相同，同一封收到的副本)"
+    },
+    {
+      "mailId": "72727129619437",
+      "type": 201,
+      "channel": "邮件",
+      "direction": "邮件发送 (al@agicogroup.com → Renata)",
+      "date": "2025-12-02 09:49 (页面显示)",
+      "subject": "Re:  Let's talk about the single face you need to AGICO GROUP",
+      "body": "Querida Renata，Tras comunicarnos con usted, creemos haber comprendido sus necesidades. Tras nuestras conversaciones, esta es la línea de producción totalmente automática de cartón corrugado y rollos de papel que necesita. Ancho de alimentación de papel efectivo de 2000 mm, velocidad de diseño de 150 m/min y la línea de producción se adapta a 220 V, 50 Hz y 3 fases según sus necesidades. Saludos cordiales, Ali (签名：Ali Li, AL@agicogroup.com, +86 178 3919 5176, Anyang General International Co., Ltd., www.agicomachinery.com；附件 Proposal of fully-auto 2000-150-3 corrugated production line.pdf 1MB)"
+    },
+    {
+      "mailId": "69511024500130",
+      "type": 201,
+      "channel": "邮件",
+      "direction": "邮件发送 (al@agicogroup.com → Renata)",
+      "date": "2025-11-07 23:49 (页面显示)",
+      "subject": "Re：Let's talk about the single face you need to AGICO GROUP",
+      "body": "Dear Renata, I hope this letter finds you well. My name is Ali at the AGICO GROUP. We've been a leading professional manufacture group company for 20+ years, especially at the corrugated carton production line and the paper pulp molding machine. Could you please share according to your needs of the single face, are you going to produce the 2-ply corrugated paperboard/ 2-ply corrugated paper roll? Glad to have your kindly inquiry to us. Best regards, Ali"
+    }
+  ],
+  "whatsapp": [],
+  "failCount": 0
+}

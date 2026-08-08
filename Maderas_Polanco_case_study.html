@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Maderas Polanco 沉睡客户唤醒案例</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --card: #1a1d29;
+    --border: #2a2d3a;
+    --accent: #4ade80;
+    --accent-dim: #22c55e;
+    --text: #e4e4e7;
+    --text-dim: #9ca3af;
+    --text-faint: #6b7280;
+    --red: #ef4444;
+    --yellow: #f59e0b;
+    --blue: #3b82f6;
+    --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --mono: 'SF Mono', 'Cascadia Code', Consolas, monospace;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--bg); color:var(--text); font-family:var(--font); line-height:1.7; -webkit-font-smoothing:antialiased; }
+  .container { max-width:900px; margin:0 auto; padding:0 20px; }
+  
+  /* Header */
+  header { padding:60px 0 40px; text-align:center; border-bottom:1px solid var(--border); }
+  header h1 { font-size:32px; font-weight:700; margin-bottom:8px; }
+  header .subtitle { color:var(--text-dim); font-size:15px; }
+  header .meta { display:flex; gap:12px; justify-content:center; flex-wrap:wrap; margin-top:20px; }
+  header .badge { background:var(--card); border:1px solid var(--border); border-radius:6px; padding:6px 14px; font-size:13px; color:var(--text-dim); }
+  header .badge.green { border-color:var(--accent-dim); color:var(--accent); }
+  header .badge.red { border-color:var(--red); color:var(--red); }
+  header .badge.yellow { border-color:var(--yellow); color:var(--yellow); }
+  
+  /* Flow */
+  .flow { display:flex; gap:0; align-items:stretch; justify-content:center; margin:48px 0; overflow-x:auto; }
+  .flow-step { flex:1; min-width:120px; text-align:center; position:relative; }
+  .flow-step .icon { width:48px; height:48px; margin:0 auto 8px; border-radius:12px; display:flex; align-items:center; justify-content:center; font-size:22px; background:var(--card); border:2px solid var(--border); }
+  .flow-step.active .icon { border-color:var(--accent); background:rgba(74,222,128,0.1); }
+  .flow-step .label { font-size:12px; color:var(--text-dim); }
+  .flow-step.active .label { color:var(--accent); }
+  .flow-step .time { font-size:11px; color:var(--text-faint); margin-top:2px; }
+  .flow-arrow { display:flex; align-items:center; color:var(--text-faint); font-size:18px; padding:0 4px; }
+  
+  /* Section */
+  section { padding:40px 0; border-bottom:1px solid var(--border); }
+  section h2 { font-size:22px; font-weight:700; margin-bottom:24px; display:flex; align-items:center; gap:10px; }
+  section h2 .num { background:var(--card); border:1px solid var(--border); border-radius:6px; padding:2px 10px; font-size:14px; color:var(--text-dim); }
+  
+  /* Table */
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  th { text-align:left; padding:12px 16px; background:var(--card); color:var(--text-dim); font-weight:600; border-bottom:1px solid var(--border); }
+  td { padding:12px 16px; border-bottom:1px solid var(--border); }
+  tr:last-child td { border-bottom:none; }
+  tr:hover td { background:rgba(255,255,255,0.02); }
+  
+  /* Timeline */
+  .timeline { position:relative; padding-left:24px; }
+  .timeline::before { content:''; position:absolute; left:8px; top:0; bottom:0; width:2px; background:var(--border); }
+  .timeline-item { position:relative; padding-bottom:24px; }
+  .timeline-item::before { content:''; position:absolute; left:-20px; top:6px; width:12px; height:12px; border-radius:50%; background:var(--card); border:2px solid var(--border); }
+  .timeline-item.outgoing::before { border-color:var(--blue); background:var(--blue); }
+  .timeline-item.incoming::before { border-color:var(--accent); background:var(--accent); }
+  .timeline-item .date { font-size:13px; color:var(--text-dim); font-family:var(--mono); }
+  .timeline-item .desc { font-size:14px; margin-top:4px; }
+  .timeline-item .gap { font-size:13px; color:var(--yellow); margin-top:2px; }
+  
+  /* Score */
+  .score-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:16px; margin:20px 0; }
+  .score-card { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:20px; }
+  .score-card .label { font-size:13px; color:var(--text-dim); margin-bottom:8px; }
+  .score-card .value { font-size:28px; font-weight:700; }
+  .score-card .desc { font-size:12px; color:var(--text-faint); margin-top:4px; }
+  .score-card.green .value { color:var(--accent); }
+  .score-card.blue .value { color:var(--blue); }
+  .score-card.yellow .value { color:var(--yellow); }
+  
+  /* Findings */
+  .findings { list-style:none; }
+  .findings li { padding:10px 0; border-bottom:1px solid var(--border); display:flex; gap:10px; align-items:flex-start; }
+  .findings li:last-child { border-bottom:none; }
+  .findings .check { color:var(--accent); flex-shrink:0; }
+  .findings .text { font-size:14px; }
+  
+  /* Email */
+  .email-box { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:24px; margin:20px 0; }
+  .email-meta { display:grid; grid-template-columns:auto 1fr; gap:8px 16px; font-size:13px; margin-bottom:20px; padding-bottom:16px; border-bottom:1px solid var(--border); }
+  .email-meta .k { color:var(--text-dim); }
+  .email-body { font-size:15px; line-height:1.8; white-space:pre-wrap; color:var(--text); }
+  .email-body .highlight { background:rgba(74,222,128,0.1); padding:2px 4px; border-radius:3px; }
+  
+  /* Tags */
+  .tag { display:inline-block; background:var(--card); border:1px solid var(--border); border-radius:4px; padding:2px 8px; font-size:12px; margin:2px; }
+  .tag.green { border-color:var(--accent-dim); color:var(--accent); }
+  .tag.red { border-color:var(--red); color:var(--red); }
+  
+  /* Bar */
+  .bar-container { width:100%; height:8px; background:var(--card); border-radius:4px; overflow:hidden; margin-top:8px; }
+  .bar-fill { height:100%; border-radius:4px; }
+  .bar-fill.green { background:var(--accent); }
+  .bar-fill.blue { background:var(--blue); }
+  .bar-fill.yellow { background:var(--yellow); }
+  
+  /* Design table */
+  .design-table th { font-size:13px; }
+  .design-table td { font-size:14px; }
+  .design-table td:first-child { color:var(--text-dim); }
+  
+  /* Stats */
+  .stats-row { display:flex; gap:16px; flex-wrap:wrap; margin:20px 0; }
+  .stat { flex:1; min-width:140px; text-align:center; background:var(--card); border:1px solid var(--border); border-radius:8px; padding:16px; }
+  .stat .num { font-size:24px; font-weight:700; }
+  .stat .label { font-size:12px; color:var(--text-dim); margin-top:4px; }
+  
+  footer { padding:40px 0; text-align:center; color:var(--text-faint); font-size:13px; }
+  
+  @media (max-width:600px) {
+    header h1 { font-size:24px; }
+    .flow { flex-direction:column; }
+    .flow-arrow { transform:rotate(90deg); padding:8px 0; }
+    table { font-size:12px; }
+    th, td { padding:8px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+
+<!-- Header -->
+<header>
+  <h1>Maderas Polanco 沉睡客户唤醒案例</h1>
+  <p class="subtitle">OKKI CRM 沉睡客户自动筛选与唤醒全流程 — 完整案例分享</p>
+  <div class="meta">
+    <span class="badge green">背调评分 7/10 🟢绿</span>
+    <span class="badge">沉睡 249 天</span>
+    <span class="badge">商机 USD 25.49万</span>
+    <span class="badge">跟进人 Ali Li</span>
+  </div>
+</header>
+
+<!-- Flow -->
+<div class="flow">
+  <div class="flow-step active"><div class="icon">🔍</div><div class="label">筛选</div><div class="time">阶段零</div></div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-step active"><div class="icon">📧</div><div class="label">抓取沟通</div><div class="time">阶段一</div></div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-step active"><div class="icon">🔎</div><div class="label">深度背调</div><div class="time">阶段一·五</div></div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-step active"><div class="icon">📊</div><div class="label">分析报告</div><div class="time">阶段二</div></div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-step active"><div class="icon">🎯</div><div class="label">契机发现</div><div class="time">阶段二·五</div></div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-step active"><div class="icon">✉️</div><div class="label">邮件草稿</div><div class="time">阶段三</div></div>
+</div>
+
+<!-- Stats -->
+<div class="stats-row">
+  <div class="stat"><div class="num" style="color:var(--accent)">4</div><div class="label">沟通记录</div></div>
+  <div class="stat"><div class="num" style="color:var(--blue)">9</div><div class="label">背调层级</div></div>
+  <div class="stat"><div class="num" style="color:var(--yellow)">3.8</div><div class="label">唤醒概率</div></div>
+  <div class="stat"><div class="num" style="color:var(--accent)">7</div><div class="label">背调评分</div></div>
+</div>
+
+<!-- 一、沟通时间线 -->
+<section>
+  <h2><span class="num">一</span>沟通时间线</h2>
+  <div class="timeline">
+    <div class="timeline-item outgoing">
+      <div class="date">2025-11-07</div>
+      <div class="desc"><strong>Ali → 客户</strong>：首封开发信（英文），介绍 AGICO，追问产能需求</div>
+    </div>
+    <div class="timeline-item outgoing">
+      <div class="date">2025-11-08 05:30 (墨西哥)</div>
+      <div class="desc">客户打开邮件</div>
+    </div>
+    <div class="timeline-item">
+      <div class="gap">⏳ 24天空白</div>
+    </div>
+    <div class="timeline-item outgoing">
+      <div class="date">2025-12-01</div>
+      <div class="desc"><strong>Ali → 客户</strong>：发送西语报价（2000-150-3瓦线，附PDF方案书）</div>
+    </div>
+    <div class="timeline-item incoming">
+      <div class="date">2025-12-02</div>
+      <div class="desc"><strong>客户 → Ali</strong>：「I think Is not necessary complete automatic」</div>
+    </div>
+    <div class="timeline-item outgoing">
+      <div class="date">2025-12-02</div>
+      <div class="desc"><strong>Ali → 客户</strong>：当天回复，发送完整自动线方案（含PDF附件）</div>
+    </div>
+    <div class="timeline-item">
+      <div class="gap">⏳ 客户未再回复，沉睡至今 249 天</div>
+    </div>
+  </div>
+</section>
+
+<!-- 二、客户画像 -->
+<section>
+  <h2><span class="num">二</span>客户画像（CRM记录 + 背调交叉验证）</h2>
+  <table>
+    <thead><tr><th>维度</th><th>CRM 记录</th><th>背调发现</th><th>交叉验证</th></tr></thead>
+    <tbody>
+      <tr><td>公司全称</td><td>Maderas Polanco</td><td>Maderas Polanco, S.A. de C.V.</td><td>✅ 一致</td></tr>
+      <tr><td>注册时间</td><td>—</td><td>2005年10月17日</td><td>20年历史，非空壳</td></tr>
+      <tr><td>地址</td><td>Guadalajara, Jalisco</td><td>Al Rancho El Encino 400, Santa Anita, Jal.</td><td>✅ 一致</td></tr>
+      <tr><td>主营业务</td><td>单面瓦线采购</td><td>木材和建材批发商（Lumber & Construction Materials Wholesalers）</td><td>采购瓦线属于业务扩展</td></tr>
+      <tr><td>联系人</td><td>Renata López</td><td>—</td><td>决策人级别待确认</td></tr>
+      <tr><td>邮箱</td><td>renata@maderaspolanco.com</td><td>域名 maderaspolanco.com 活跃</td><td>✅ 一致</td></tr>
+      <tr><td>员工规模</td><td>—</td><td>Glassdoor 有薪酬数据，Indeed 有员工评价</td><td>有真实员工，非空壳</td></tr>
+      <tr><td>社媒活跃度</td><td>—</td><td>Facebook 479赞5人讨论，Instagram 活跃</td><td>正常运营中</td></tr>
+      <tr><td>商机金额</td><td>USD 25.49万</td><td>—</td><td>高价值客户</td></tr>
+      <tr><td>标签</td><td>在谈大额商机</td><td>—</td><td>CRM标记高价值</td></tr>
+      <tr><td>阶段</td><td>报价/商谈方案</td><td>—</td><td>已进入报价阶段</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- 三、背调核心发现 -->
+<section>
+  <h2><span class="num">三</span>背调核心发现</h2>
+  <ul class="findings">
+    <li><span class="check">✅</span><span class="text"><strong>制裁名单核查</strong>：未命中（OFAC/CSL/UN 均无 Maderas Polanco 记录）</span></li>
+    <li><span class="check">✅</span><span class="text"><strong>行业匹配度</strong>：高 — 墨西哥瓦楞包装市场2026年规模 USD 57.9亿，CAGR 4.64%，客户主营木材建材，扩展到瓦楞纸板生产线属于产业链延伸</span></li>
+    <li><span class="check">✅</span><span class="text"><strong>空壳风险</strong>：否 — 2005年注册，有实体地址、Facebook/Instagram/Glassdoor/Indeed 多平台数字足迹</span></li>
+    <li><span class="check">✅</span><span class="text"><strong>负面信号</strong>：无重大负面。Indeed 员工评价提到"环境有毒"、"管理混乱"，但属于正常企业内部管理问题，不影响交易</span></li>
+    <li><span class="check">✅</span><span class="text"><strong>背调评分</strong>：7/10，风险评级 🟢绿</span></li>
+  </ul>
+  
+  <div class="score-grid" style="margin-top:24px">
+    <div class="score-card green">
+      <div class="label">背调评分</div>
+      <div class="value">7/10</div>
+      <div class="desc">🟢 绿 — 可信、匹配度高</div>
+      <div class="bar-container"><div class="bar-fill green" style="width:70%"></div></div>
+    </div>
+    <div class="score-card blue">
+      <div class="label">行业匹配度</div>
+      <div class="value">高</div>
+      <div class="desc">墨西哥瓦楞市场 CAGR 4.64%</div>
+    </div>
+    <div class="score-card green">
+      <div class="label">空壳风险</div>
+      <div class="value">否</div>
+      <div class="desc">20年注册历史 + 多平台足迹</div>
+    </div>
+  </div>
+</section>
+
+<!-- 四、沉睡原因诊断 -->
+<section>
+  <h2><span class="num">四</span>沉睡原因诊断</h2>
+  <p style="font-size:15px; margin-bottom:20px; color:var(--text-dim);">
+    最后一次沟通内容：客户回复「I think Is not necessary complete automatic」（不需要全自动线），Ali 当天发送了完整自动线方案（PDF），客户未再回复。
+  </p>
+  <table>
+    <thead><tr><th>#</th><th>原因</th><th>分析</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>需求不匹配</td><td>客户明确表示不需要"全自动"线，但 Ali 回复仍发的是"fully-auto"方案。客户感觉没被听懂，失去回复意愿</td></tr>
+      <tr><td>2</td><td>可能的实际需求</td><td>客户要的是半自动或手动单面机，价格更低、适合起步阶段</td></tr>
+      <tr><td>3</td><td>时机因素</td><td>12月初是墨西哥年底旺季，客户可能忙于现有业务</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- 五、唤醒可行性评估 -->
+<section>
+  <h2><span class="num">五</span>唤醒可行性评估</h2>
+  <table>
+    <thead><tr><th>维度</th><th>评分</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td>历史关系基础</td><td>4/5</td><td>有实质性双向沟通，客户回复过一次</td></tr>
+      <tr><td>需求匹配度</td><td>4/5</td><td>客户确实需要单面机，只是不要全自动</td></tr>
+      <tr><td>联系人有效性</td><td>3/5</td><td>Renata 回复过邮件，邮箱有效</td></tr>
+      <tr><td>时机合适度</td><td>4/5</td><td>9月16日墨西哥独立日临近，可做节日切入</td></tr>
+    </tbody>
+  </table>
+  <div class="score-grid" style="margin-top:24px">
+    <div class="score-card yellow">
+      <div class="label">综合唤醒概率</div>
+      <div class="value">3.8/5</div>
+      <div class="desc">高概率唤醒，关键是纠正"发错方案"</div>
+      <div class="bar-container"><div class="bar-fill yellow" style="width:76%"></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- 六、唤醒行动建议 -->
+<section>
+  <h2><span class="num">六</span>唤醒行动建议</h2>
+  <table>
+    <thead><tr><th>优先级</th><th>动作</th><th>预期效果</th></tr></thead>
+    <tbody>
+      <tr><td><span class="tag red">🔴 立即</span></td><td>发送半自动方案邮件</td><td>纠正上次错误，提供客户真正需要的产品</td></tr>
+      <tr><td><span class="tag" style="border-color:var(--yellow);color:var(--yellow)">🟡 48h</span></td><td>如无回复，发WhatsApp跟进</td><td>Renata 有WhatsApp（CRM有电话），多渠道触达</td></tr>
+      <tr><td><span class="tag green">🟢 1-2周</span></td><td>如仍无回复，发行业展会信息</td><td>用 EXPO PACK Mexico 信息吸引注意</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- 七、唤醒契机分析 -->
+<section>
+  <h2><span class="num">七</span>唤醒契机分析</h2>
+  <table>
+    <thead><tr><th>契机</th><th>日期</th><th>距今天数</th><th>相关性</th><th>推荐度</th></tr></thead>
+    <tbody>
+      <tr style="background:rgba(74,222,128,0.05)"><td><strong>墨西哥独立日</strong></td><td>9月16日</td><td>39天</td><td>⭐⭐⭐</td><td>⭐⭐⭐⭐⭐</td></tr>
+      <tr><td>EXPO PACK Mexico 2026</td><td>2026年6月8-10日</td><td>太远</td><td>⭐⭐⭐⭐⭐</td><td>⭐⭐</td></tr>
+      <tr><td>首次沟通11个月</td><td>11月7日</td><td>太远</td><td>⭐⭐</td><td>⭐</td></tr>
+    </tbody>
+  </table>
+  
+  <div class="email-box" style="margin-top:24px">
+    <p style="font-size:15px;"><strong>推荐契机：墨西哥独立日（9月16日）</strong></p>
+    <p style="font-size:14px; color:var(--text-dim); margin-top:8px;">
+      客户在 Guadalajara，独立日是墨西哥最重要的国家节日。邮件可以自然以独立日问候切入，同时带出半自动单面机方案。
+    </p>
+    <p style="font-size:14px; color:var(--text-dim); margin-top:8px;">
+      <strong>邮件融入方式</strong>：开头提及独立日，但不展开节日祝福（B2B不宜过度寒暄），快速过渡到"上次您提到不需要全自动线，我们重新整理了半自动方案"。
+    </p>
+  </div>
+</section>
+
+<!-- 八、唤醒邮件草稿 -->
+<section>
+  <h2><span class="num">八</span>唤醒邮件草稿</h2>
+  <div class="email-box">
+    <div class="email-meta">
+      <span class="k">收件人</span><span>Renata López &lt;renata@maderaspolanco.com&gt;</span>
+      <span class="k">主题</span><span>Semi-auto single face corrugated line – revisited for your needs</span>
+      <span class="k">契机</span><span>墨西哥独立日（9月16日）</span>
+      <span class="k">建议发送</span><span>9月14-15日，墨西哥时区上午 9:00-10:00</span>
+    </div>
+    <div class="email-body">Dear Renata,
+
+As Mexico approaches its Independence Day, I hope this message finds you and your team at Maderas Polanco doing well.
+
+I was reviewing our conversation from last December, and I realized something important: when you mentioned that a fully automatic line was not necessary, I should have immediately offered our <span class="highlight">semi-automatic single face corrugated line</span> instead. I apologize for not responding to your actual need at that time.
+
+We do have a semi-automatic 2000mm single face line that might be exactly what you're looking for — simpler operation, lower investment, and well-suited for companies expanding from wood products into corrugated board production. The design speed is 150 m/min with manual paper splicing, which keeps the cost significantly lower than the fully-auto version I sent before.
+
+Would you like me to share the updated semi-auto proposal? A quick reply with "yes" is all I need.
+
+Best regards,
+Ali
+AGICO GROUP</div>
+  </div>
+  
+  <table class="design-table">
+    <thead><tr><th>要素</th><th>设计意图</th></tr></thead>
+    <tbody>
+      <tr><td>切入角度</td><td>承认上次发错方案（全自动→客户说不要），以纠正错误切入</td></tr>
+      <tr><td>价值点</td><td>提供半自动方案，更低投资、更适合木材商转型</td></tr>
+      <tr><td>主体内容</td><td>简洁描述半自动线参数（2000mm、150m/min、手动接纸）</td></tr>
+      <tr><td>结尾CTA</td><td>极低门槛——只需回复"yes"</td></tr>
+      <tr><td>契机融入</td><td>开头自然提及独立日，但不过度寒暄</td></tr>
+      <tr><td>风险适配</td><td>绿级客户，措辞正常，不需特别谨慎</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- Summary -->
+<section style="border-bottom:none">
+  <h2><span class="num">✓</span>案例总结</h2>
+  <div class="score-grid">
+    <div class="score-card green">
+      <div class="label">背调评分</div>
+      <div class="value">7/10</div>
+      <div class="desc">🟢 绿 — 正常推进唤醒</div>
+    </div>
+    <div class="score-card yellow">
+      <div class="label">唤醒概率</div>
+      <div class="value">3.8/5</div>
+      <div class="desc">高价值唤醒对象</div>
+    </div>
+    <div class="score-card blue">
+      <div class="label">核心问题</div>
+      <div class="value" style="font-size:16px">方案错配</div>
+      <div class="desc">客户要半自动，发了全自动</div>
+    </div>
+    <div class="score-card green">
+      <div class="label">建议发送</div>
+      <div class="value" style="font-size:16px">9月14-15日</div>
+      <div class="desc">独立日前1-2天</div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p>Generated by Dormant Customer Wakeup Skill · AGICO GROUP · 2026-08-08</p>
+</footer>
+
+</div>
+</body>
+</html>

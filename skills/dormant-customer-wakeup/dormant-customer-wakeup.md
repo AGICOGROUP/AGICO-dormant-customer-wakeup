@@ -718,28 +718,117 @@ write → {客户名}_background.html
 
 用户确认草稿且选择"你填入"后：
 
-### 4.1 填入草稿
+### 4.1 找到客户最后一封回信 + 写入邮件草稿（脚本化）
 
-1. 复用客户详情页标签
-2. 点击最新一条邮件主题 → `browser_wait 2秒` → 右侧抽屉打开
-3. 点击「回复」→ `browser_wait 2秒`
-4. `browser_console evaluate` 填入正文：
+**⚠️ 流程铁律：找到客户最后一份回信 → 点击快速回复 → 脚本写入正文 → 等待用户手动点"发送"**
+
+#### 步骤1：找到客户最后一封回信
+
+在客户详情页的邮件列表中，需要找到**客户发来的最后一封邮件**（不是我方发出的最后一封）。这是回复的锚点。
+
+`browser_console evaluate` 运行以下脚本，它会自动找到最后一封"收到邮件"并点击选中：
 
 ```javascript
-const body = `{邮件正文，\n表示换行}`;
-const el = document.querySelector('textarea, [contenteditable="true"], .ql-editor');
-if (el) {
-  el.tagName === 'TEXTAREA' ? (el.value = body) : (el.textContent = body);
-  el.dispatchEvent(new Event('input', {bubbles: true}));
-}
+(() => {
+  // 找所有邮件项，按 DOM 顺序（最新在上）
+  var items = document.querySelectorAll('div.component-dynamic-item-email');
+  var found = null;
+  for (var i = 0; i < items.length; i++) {
+    var text = items[i].innerText || '';
+    // 判断是否为客户回信（含"收到邮件"标识）
+    if (text.includes('收到邮件')) {
+      found = items[i];
+      // 点击选中这封邮件
+      items[i].click();
+      break;
+    }
+  }
+  
+  if (!found) {
+    return JSON.stringify({error: 'no_incoming_mail', totalItems: items.length});
+  }
+  
+  return JSON.stringify({
+    success: true,
+    selectedIndex: i,
+    preview: found.innerText.substring(0, 200)
+  });
+})()
 ```
 
-5. `browser_screenshot` 截图确认
-6. 告知用户：**"草稿已填入，请检查后手动发送。"**
+> `browser_wait 2秒` 等待邮件详情加载
 
-> 如果用户选择自己手动填写，把草稿文本发给用户即可。
+#### 步骤2：点击"快速回复"展开编辑器
 
-### 4.2 更新进度
+`browser_console evaluate` 点击快速回复触发器：
+
+```javascript
+(() => {
+  var trigger = document.querySelector('div.mail-detail-quick-reply div.expand-trigger');
+  if (!trigger) return JSON.stringify({error: 'no_quick_reply_trigger'});
+  trigger.click();
+  return JSON.stringify({success: true});
+})()
+```
+
+> `browser_wait 2秒` 等待编辑器展开
+
+#### 步骤3：脚本写入邮件正文
+
+将阶段三生成的邮件正文写入编辑器。`browser_console evaluate` 运行：
+
+```javascript
+(() => {
+  // MAIL_BODY 替换为实际邮件正文（\n 表示换行）
+  var body = MAIL_BODY;
+  
+  var textarea = document.querySelector('div.mail-detail-quick-reply textarea.okki-input');
+  if (!textarea) return JSON.stringify({error: 'no_textarea_found'});
+  
+  // 写入正文
+  var nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+  nativeInputValueSetter.call(textarea, body);
+  
+  // 触发 input 事件让框架感知变化（启用发送按钮）
+  textarea.dispatchEvent(new Event('input', {bubbles: true}));
+  textarea.dispatchEvent(new Event('change', {bubbles: true}));
+  
+  // 检查发送按钮是否已启用
+  var sendBtn = document.querySelector('button#report-stat-quick-reply-btn-confirm');
+  var sendEnabled = sendBtn && !sendBtn.disabled;
+  
+  return JSON.stringify({
+    success: true,
+    bodyLength: body.length,
+    sendButtonEnabled: sendEnabled
+  });
+})()
+```
+
+> **MAIL_BODY 替换规则**：将阶段三生成的邮件正文（纯文本，换行用 `\n`）作为字符串赋值给 `body` 变量。例如：`var body = "Dear Renata,\n\nAs Mexico approaches its Independence Day...";`
+
+#### 步骤4：截图确认 + 等待用户手动发送
+
+```
+browser_screenshot
+```
+
+告知用户：**"邮件草稿已写入快速回复框，请检查内容后手动点击发送。"**
+
+> **⚠️ 禁止自动点发送按钮。** 发送邮件是不可逆操作，必须由用户手动确认。
+
+### 4.2 DOM 结构参考
+
+| 元素 | 选择器 | 说明 |
+|------|--------|------|
+| 邮件列表项 | `div.component-dynamic-item-email` | 按时间倒序排列 |
+| 当前选中邮件 | `div.component-dynamic-item-email.active` | 带 `.active` 类 |
+| 客户回信标识 | 文本含"收到邮件" | 我方发出标识为"发送邮件" |
+| 快速回复触发 | `div.mail-detail-quick-reply div.expand-trigger` | 点击展开编辑器 |
+| 回复编辑器 | `div.mail-detail-quick-reply textarea.okki-input` | placeholder="快速回复" |
+| 发送按钮 | `button#report-stat-quick-reply-btn-confirm` | 无内容时 disabled |
+
+### 4.3 更新进度
 
 更新 `${workspace_memory}/project/dormant-customers.json`：
 - 将当前客户 `status` 改为 `"completed"`
@@ -747,7 +836,7 @@ if (el) {
 - 更新 `winbackStatus`（sent / replied / no_reply）
 - 记录 `processedAt` 时间戳
 
-### 4.3 下一步提示
+### 4.4 下一步提示
 
 ```markdown
 ✅ 当前客户已完成。进度：{completed}/{total}
@@ -756,38 +845,6 @@ if (el) {
 
 继续处理下一个吗？
 ```
-
----
-
-## 禁止做法
-
-- ❌ 未抓取真实沟通内容就分析
-- ❌ 逐封点击展开（API批量抓取才是正确方式）
-- ❌ 跳过用户确认节点
-- ❌ 点CRM发送按钮
-- ❌ 用 `web_fetch` 访问OKKI（SPA，不生效）
-- ❌ 对同一按钮反复 snapshot 确认（页面结构稳定）
-- ❌ 重复分析已标记 `completed` 的客户
-- ❌ 在列表仍有效时重新筛选（除非用户明确要求刷新）
-- ❌ 只抓邮件忽略 WhatsApp（trailList 不加 type=mail 参数）
-
----
-
-## 异常处理
-
-| 情况 | 处理 |
-|------|------|
-| 筛选结果为0 | 告知用户当前无沉睡客户，确认筛选条件是否正确 |
-| 列表中找不到该客户 | 通过 companyId URL 直接跳转。仍失败→标记为 `skipped`，记录原因 |
-| API返回空/cookie过期 | 告知用户需重新登录CRM |
-| 互动不足30条 | 有多少读多少，如实说明 |
-| 全是已读回执/系统消息 | 如实告知，建议WhatsApp联系 |
-| WhatsApp详情API失败 | 从 trailList 条目的 summary/data 字段提取可见信息，标注"详情API受限" |
-| 页面结构与预期不同 | 截图告知，请求手动介入 |
-| 联系人已离职（邮件退信） | 报告中标注，建议寻找新联系人 |
-| workspace memory 写入失败 | 回退到当前工作目录写 JSON，告知用户 |
-| **触发反自动化拦截**（404/封禁/超时） | 已抓数据保存，告知用户"第 N 批被拦截"，等待 5-10 分钟后继续。下次自动从断点续抓 |
-| **单批全部失败** | 告知用户 CRM 可能限制访问，建议等待 10-15 分钟或换时段重试 |
 
 ---
 
